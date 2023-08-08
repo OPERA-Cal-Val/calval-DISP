@@ -36,6 +36,10 @@ Summarized below are the general procedures to implement our validation approach
   - b)	We calculate the mean and the standard deviation of the velocity residuals (e.g. perform scatter plot/RMSE analysis) and then assess if the OPERA L3 DISP requirements are satisfied.
 
 For all the validation analyses, we report the accuracy that can be achieved with and without applying the optional correction layers embedded within the L3 DISP products, including the ionospheric propagation delays (e.g., [Fattahi et al., 2017]), tropospheric propagation delays (e.g., [Jolivet et al., 2011] and [Doin et al., 2009]), and solid earth tide effects (e.g. [Agnew 2012]).
+<br />
+<br />
+<br />
+<br />
 
 
 ## Validation Approaches
@@ -46,11 +50,20 @@ Three validation approaches will be performed separately depending on the Valida
 
 Perform direct comparison of GNSS and InSAR is performed over deforming regions with dense GNSS networks including Central Valley in California, Hawaii, New York City, Hampton Roads in Virginia, Seattle, and Houston/Galveston. These validation sites are shown in Figure 1 and detailed in Table 1. Temporally decorrelated pixels on the InSAR data (i.e. temporal coherence ≤ 0.5) are removed and a water mask is applied during validation. An initial inspection of the GNSS time-series and the study area is done to select a stable reference area for all the InSAR data (i.e. reference point noise analysis). We perform root-mean-square error (RMSE) analysis (i.e. statistical analysis 3b above) to assess if we meet our DISP product requirements.
 
-![fig1_operadisp](https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/a32159f3-ae35-4a02-b174-83247a23cd60)
-Figure 1. Proposed Validation displacement sites from Table 4.3 displayed geographically. Red outlines are regions which have dense GNSS networks and are considered deforming. Orange outline (Oklahoma) is considered a negligibly deforming region with dense GNSS stations. Gray square in California is the target site of the CRs to be deployed by OPERA.
+<p align="center">
+  <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/a32159f3-ae35-4a02-b174-83247a23cd60">
+</p>
+<B>Figure 1.</B> Proposed Validation displacement sites from Table 4.3 displayed geographically. Red outlines are regions which have dense GNSS networks and are considered deforming. Orange outline (Oklahoma) is considered a negligibly deforming region with dense GNSS stations. Gray square in California is the target site of the CRs to be deployed by OPERA.
+<br />
+<br />
 
-![Screenshot 2023-08-07 at 7 10 59 PM](https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/5bf73799-ff2f-451a-8408-bdb6c3636d31)
-Table 1. Proposed Validation displacement sites chosen to represent a diversity of deformation processes in Northern America over various climate and terrain locations.
+
+<p align="center">
+  <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/5bf73799-ff2f-451a-8408-bdb6c3636d31">
+</p>
+<B>Table 1.</B> Proposed Validation displacement sites chosen to represent a diversity of deformation processes in Northern America over various climate and terrain locations.
+<br />
+<br />
 
 ### Validation approach 2 (VA2)
 
@@ -60,12 +73,22 @@ The InSAR displacement rate residuals will be computed from a dense grid of rand
 
 The North America Sentinel-1 12 day coherence study previously done for NISAR (Figure 4.10) will be used as a reference guide to ensure that the selected negligibly deforming validation sites meet the temporal coherence requirement.
 
-![Screenshot 2023-08-07 at 5 09 22 PM](https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/27ec413a-73c0-4fe7-aa67-815b1bfc46ca)
-Table 2. Summary of OPERA DISP accuracy requirements.
+
+<p align="center">
+  <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/27ec413a-73c0-4fe7-aa67-815b1bfc46ca">
+</p>
+<B>Table 2.</B> Summary of OPERA DISP accuracy requirements.
+<br />
+<br />
 
 ### Validation approach 3 (VA3) TBD
 
 In addition to the two validation approaches described above, we are also performing a validation experiment using the corner reflectors that we will deploy across the creeping segment of the San Andreas Fault. The precise height and locations of the CRs are obtained from their co-located GNSS stations or by conducting geodetic surveys annually or semi-annually. We will take the 3-component CR position values and project them to the satellite’s line-of-sight direction to estimate the CR LOS velocities. We will then calculate the residuals by directly comparing the CR LOS velocities and InSAR LOS displacement rates. To test if the requirements are achieved for NISAR and Sentinel-1, we will implement statistical analysis 3b as described above. Additional rigorous statistical modeling and tests will be considered for additional verification of the requirements. NOTE: this approach has not yet been implemented in this repository.
+<br />
+<br />
+<br />
+<br />
+
 
 ## References
 
