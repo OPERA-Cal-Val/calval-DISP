@@ -18,13 +18,13 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
 
 ## Installation
 
-A detailed installation on how to build a working environment can be found here.
+A detailed installation on how to build a working environment can be found __[here](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/docs/installation.md/)__.
 
 ## Overview of notebook
 
 DISP analog, standardized interferometric products can be obtained from the Alaska Satellite Facility (ASF) Hybrid Pluggable Processing Pipeline (HyP3) on demand service, and in the form of the Advanced Rapid Image Analysis (ARIA) project’s formulated Geocoded Unwrapped Phase product (ARIA-GUNW).
 
-Supporting input of such stacks of analog products across a range of diverse study areas, the notebook below contains a suite of functionality to evaluate the uncertainties associated with the validation requirements as outlined in the OPERA validation plan. The notebook itself was adopted the NISAR team Algorithm Theoretical Basis Document (ATBD) __[notebook for secular motion](https://github.com/nisar-solid/ATBD/blob/main/methods/secular/Secular_Requirement_Validation.ipynb/)__.
+Supporting input of such stacks of analog products across a range of diverse study areas, the __[DISP-S1_Requirement_Validation.ipynb](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/DISP-S1_Requirement_Validation.ipynb/)__ notebook contains a suite of functionality to evaluate the uncertainties associated with the validation requirements as outlined in the OPERA validation plan. The notebook itself was adopted the NISAR team Algorithm Theoretical Basis Document (ATBD) __[notebook for secular motion](https://github.com/nisar-solid/ATBD/blob/main/methods/secular/Secular_Requirement_Validation.ipynb/)__.
 
 ## General Procedures
 
@@ -32,8 +32,8 @@ Summarized below are the general procedures to implement our validation approach
 1.	InSAR LOS velocity estimation: We estimate the long term line-of-sight rates and corresponding uncertainties by fitting a time-series function which includes a linear rate parameter across the displacement history, derived from the reconstructed displacement time-series using consecutive DISP products in time. Where needed, we may include additional complexities (e.g. Heaviside step, exponential or logarithmic function for coseismic and postseismic events/processes).
 2.	Validation data LOS velocity estimation: We project the independent Validation displacement data (e.g GNSS time-series) in the radar look direction and then estimate the velocity over the same period of time and with the same time-series models as from step 1. The GNSS time-series data will have its processing and noise corrections applied. As an example, the GNSS time-series data obtained from the University of Nevada, Reno (UNR) is corrected for instrument changes, ionospheric and tropospheric propagation delays, as well as solid earth tides [Blewitt et al., 2018].
 3.	Statistical analyses:  We mainly implement similar analyses as exemplified to assess if the OPERA L3 DISP product requirements are achieved.
-  a)	Variogram analysis for the line-of-sight velocity residuals will be performed. Using the structure function, values at length scales 0.1 km < L < 50 km will be extracted and then compared to the OPERA L3 DISP requirements for validation.
-  b)	We calculate the mean and the standard deviation of the velocity residuals (e.g. perform scatter plot/RMSE analysis) and then assess if the OPERA L3 DISP requirements are satisfied.
+    a)	Variogram analysis for the line-of-sight velocity residuals will be performed. Using the structure function, values at length scales 0.1 km < L < 50 km will be extracted and then compared to the OPERA L3 DISP requirements for validation.
+  	b)	We calculate the mean and the standard deviation of the velocity residuals (e.g. perform scatter plot/RMSE analysis) and then assess if the OPERA L3 DISP requirements are satisfied.
 
 For all the validation analyses, we report the accuracy that can be achieved with and without applying the optional correction layers embedded within the L3 DISP products, including the ionospheric propagation delays (e.g., [Fattahi et al., 2017]), tropospheric propagation delays (e.g., [Jolivet et al., 2011] and [Doin et al., 2009]), and solid earth tide effects (e.g. [Agnew 2012]).
 
