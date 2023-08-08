@@ -1,0 +1,37 @@
+# create environment : conda env create -f environment.yml
+name: atbd
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.8
+  - asf_search
+  - cartopy
+  - gdal>=3.4.1
+  - geopandas
+  - h5py
+  - joblib
+  - matplotlib
+  - mintpy
+  - netcdf4
+  - numpy
+  - pandas
+  - xarray
+  - rasterio
+  - rioxarray
+  - pip
+  - pyproj
+  - requests
+  - scipy>1.10.0
+  - mintpy
+  - shapely
+  - wget
+  - awscli
+  - nbdime
+  #for ARIA-tools-docs
+  - jupyterlab
+  - jupyter_contrib_nbextensions
+  - jupyter_nbextensions_configurator
+  - dem_stitcher>=2.5.0
+  - pip:
+    - rise
