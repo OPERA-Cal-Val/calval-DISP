@@ -5,14 +5,14 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
 
 1. [Installation](#installation)
 2. [Overview of notebook](#overview-of-notebook)
-3. [General Procedures](# general-procedures)
+3. [General Procedures](#general-procedures)
     -   [InSAR LOS velocity estimation](#insar-los-velocity-estimation)
     -   [Validation data LOS velocity estimation](#validation-data-los-velocity-estimation)
     -   [Statistical analyses](#statistical-analyses)
 4. [Validation Approaches](#validation-approaches)
-    -   [Validation approach 1 (VA1)](# validation-approach-1)
-    -   [Validation approach 2 (VA2)](# validation-approach-2)
-    -   [Validation approach 3 (VA3)](# validation-approach-3)
+    -   [Validation approach 1 (VA1)](#validation-approach-1)
+    -   [Validation approach 2 (VA2)](#validation-approach-2)
+    -   [Validation approach 3 (VA3)](#validation-approach-3)
 5. [References](#references)
 6. [Contributors](#contributors)
 
