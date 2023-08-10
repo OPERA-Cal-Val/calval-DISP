@@ -75,7 +75,7 @@ The North America Sentinel-1 12 day coherence study previously done for NISAR (F
 
 
 <p align="center">
-  <img width="90%" height="90%" src="![Screenshot 2023-08-09 at 4 54 14 PM](https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/7d3c6884-9e6c-46f6-b1c4-8f513a10af58)">
+  <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/7d3c6884-9e6c-46f6-b1c4-8f513a10af58">
 </p>
 <B>Table 2.</B> Summary of OPERA DISP accuracy requirements.
 <br />
