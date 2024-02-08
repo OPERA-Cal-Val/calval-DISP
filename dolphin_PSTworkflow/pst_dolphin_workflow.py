@@ -72,7 +72,9 @@ def create_parser():
                         default=2,
                         help='Unw option: specify num of parallel jobs')
     parser.add_argument('--ntiles', dest='ntiles', type=int,
-                        default=2, help='Unw option: specify num of tiles')
+                        default=4,
+                        help='Unw option: specify num of tiles. '
+                             'Suggested range is 4-16')
     parser.add_argument('-o', '--outdir', dest='out_dir', type=str,
                         default='./', help='Specify output directory')
     parser.add_argument('-verbose', '--verbose', action='store_true',
