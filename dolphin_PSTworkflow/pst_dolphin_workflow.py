@@ -54,6 +54,25 @@ def create_parser():
                         help='Specify area of interest as: '
                              '1. path to a valid shapefile, or '
                              '2. S N W E coordinates, ie ISCE convention')
+    parser.add_argument('--nworkers', dest='n_workers', type=int,
+                        default=4, help='Ifg option: specify num of workers')
+    parser.add_argument('--threadsperworker', dest='threads_per_worker',
+                        type=int,
+                        default=8,
+                        help='Ifg option: specify num of threads per worker')
+    parser.add_argument('--unwmethod', dest='unwrap_method',
+                        type=str,
+                        default='snaphu',
+                        help='Unw option: specify an unw method: '
+                             '1. snaphu '
+                             '2. icu '
+                             '3. phass ')
+    parser.add_argument('--nparalleljobs', dest='n_parallel_jobs',
+                        type=int,
+                        default=2,
+                        help='Unw option: specify num of parallel jobs')
+    parser.add_argument('--ntiles', dest='ntiles', type=int,
+                        default=2, help='Unw option: specify num of tiles')
     parser.add_argument('-o', '--outdir', dest='out_dir', type=str,
                         default='./', help='Specify output directory')
     parser.add_argument('-verbose', '--verbose', action='store_true',
@@ -122,6 +141,10 @@ def access_cslcs(inps=None):
     frameid_number = inps.frame_id
     orbit_pass = inps.orbit_pass
     area_of_interest = inps.area_of_interest
+    n_workers = inps.n_workers
+    threads_per_worker = inps.threads_per_worker
+    n_parallel_jobs = inps.n_parallel_jobs
+    ntiles = (inps.ntiles, inps.ntiles)
     if orbit_pass:
         if orbit_pass[:3].lower() == 'asc':
             orbit_pass = 'Ascending'
@@ -264,9 +287,9 @@ def access_cslcs(inps=None):
                               work_directory=str(dolphin_dir_burst),
                               subdataset='/data/VV',
                               strides=[6, 3],
-                              n_workers=4,
-                              n_parallel_bursts=2,
-                              threads_per_worker=8,
+                              n_workers=n_workers,
+                              n_parallel_bursts=1,
+                              threads_per_worker=threads_per_worker,
                               no_unwrap=True)
         # run dolphin
         drun.run(str(yml_file))
@@ -309,6 +332,8 @@ def access_cslcs(inps=None):
     # set unw options
     unwrap_options = cfg_obj.unwrap_options
     unwrap_options._directory = stitched_ifg_path
+    unwrap_options.ntiles = ntiles
+    unwrap_options.n_parallel_jobs = n_parallel_jobs
     unwrapping.run(
         ifg_file_list=stitched_ifg_paths,
         cor_file_list=stitched_cor_paths,
