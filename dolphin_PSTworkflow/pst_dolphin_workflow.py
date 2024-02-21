@@ -20,6 +20,10 @@ from shapely.geometry import box
 
 from tqdm import tqdm
 
+from dolphin.io import get_raster_bounds, get_raster_crs
+
+from dolphin.utils import prepare_geometry
+
 from dolphin.workflows import _cli_config as dconfig
 from dolphin.workflows import _cli_run as drun
 from dolphin.workflows import stitching_bursts, unwrapping, config
@@ -54,8 +58,11 @@ def create_parser():
                         help='Specify area of interest as: '
                              '1. path to a valid shapefile, or '
                              '2. S N W E coordinates, ie ISCE convention')
-    parser.add_argument('--nworkers', dest='n_workers', type=int,
-                        default=4, help='Ifg option: specify num of workers')
+    parser.add_argument('--strides', dest='strides',
+                        type=str,
+                        default='6 3',
+                        help='Ifg option: Specify the (x y) '
+                             'strides (decimation factor')
     parser.add_argument('--threadsperworker', dest='threads_per_worker',
                         type=int,
                         default=8,
@@ -70,7 +77,13 @@ def create_parser():
     parser.add_argument('--nparalleljobs', dest='n_parallel_jobs',
                         type=int,
                         default=2,
-                        help='Unw option: specify num of parallel jobs')
+                        help='Unw option: '
+                             'specify num of IFGs to unw in parallel')
+    parser.add_argument('--nparalleltiles', dest='n_parallel_tiles',
+                        type=int,
+                        default=2,
+                        help='Unw option: '
+                             'specify num of tiles to unw in parallel')
     parser.add_argument('--ntiles', dest='ntiles', type=int,
                         default=4,
                         help='Unw option: specify num of tiles. '
@@ -143,9 +156,10 @@ def access_cslcs(inps=None):
     frameid_number = inps.frame_id
     orbit_pass = inps.orbit_pass
     area_of_interest = inps.area_of_interest
-    n_workers = inps.n_workers
+    strides = inps.strides.split()
     threads_per_worker = inps.threads_per_worker
     n_parallel_jobs = inps.n_parallel_jobs
+    n_parallel_tiles = inps.n_parallel_tiles
     ntiles = (inps.ntiles, inps.ntiles)
     if orbit_pass:
         if orbit_pass[:3].lower() == 'asc':
@@ -174,7 +188,7 @@ def access_cslcs(inps=None):
                                    area_of_interest[1])  # (W,S,E,N)
 
     # set output dirs, and create them if necessary
-    out_dir = Path(inps.out_dir)
+    out_dir = Path(inps.out_dir).resolve()
     static_dir = out_dir.joinpath('static_CSLCs')
     cslc_dir = out_dir.joinpath('CSLCs')
     dolphin_dir = out_dir.joinpath('dolphin_output')
@@ -288,10 +302,11 @@ def access_cslcs(inps=None):
                               slc_files=cslc_txt,
                               work_directory=str(dolphin_dir_burst),
                               subdataset='/data/VV',
-                              strides=[6, 3],
-                              n_workers=n_workers,
+                              strides=strides,
                               n_parallel_bursts=1,
                               threads_per_worker=threads_per_worker,
+                              enable_gpu=True,
+                              mask_file=None
                               no_unwrap=True)
         # run dolphin
         drun.run(str(yml_file))
@@ -312,7 +327,11 @@ def access_cslcs(inps=None):
     ifg_paths = list(dolphin_dir.glob('t*/interferograms/*.vrt'))
     coh_paths = list(dolphin_dir.glob('t*/linked_phase/' +
                      'temporal_coherence_average_*.tif'))
-    ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels_looked.tif'))
+    # only access looked file if applicable
+    if strides == ['1', '1']:
+        ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels.tif'))
+    else:
+        ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels_looked.tif'))
     cfg_obj = config.DisplacementWorkflow.from_yaml(yml_file)
     (
         stitched_ifg_paths,
@@ -328,6 +347,25 @@ def access_cslcs(inps=None):
         file_date_fmt='%Y%m%d',
         corr_window_size=(11, 11),
     )
+    #
+    # generate geometry files
+    dem_file = None #!#
+    geometry_dir = stitched_ifg_path / 'geometry'
+    geometry_dir.mkdir(exist_ok=True)
+    geometry_files = sorted(Path(static_dir).glob("*STATIC_*.h5"))
+    crs = get_raster_crs(stitched_ifg_paths[0])
+    epsg = crs.to_epsg()
+    out_bounds = get_raster_bounds(stitched_ifg_paths[0])
+    frame_geometry_files = prepare_geometry(
+        geometry_dir=geometry_dir,
+        geo_files=geometry_files,
+        matching_file=stitched_ifg_paths[0],
+        dem_file=dem_file,
+        epsg=epsg,
+        out_bounds=out_bounds,
+        strides=cfg_obj.output_options.strides
+    )
+    #
     # unwrap stitched unw
     row_looks, col_looks = cfg_obj.phase_linking.half_window.to_looks()
     nlooks = row_looks * col_looks
@@ -336,6 +374,7 @@ def access_cslcs(inps=None):
     unwrap_options._directory = stitched_ifg_path
     unwrap_options.ntiles = ntiles
     unwrap_options.n_parallel_jobs = n_parallel_jobs
+    unwrap_options.n_parallel_tiles = n_parallel_tiles
     unwrapping.run(
         ifg_file_list=stitched_ifg_paths,
         cor_file_list=stitched_cor_paths,

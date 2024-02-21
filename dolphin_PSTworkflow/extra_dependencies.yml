@@ -1,0 +1,30 @@
+name: dolphin-env
+channels:
+  - conda-forge
+dependencies:
+  - snaphu
+  - boto3
+  - geopandas
+  - pandas
+  - tqdm
+  - pip
+  - argcomplete
+  - cartopy
+  - cvxopt
+  - dask>=1.0
+  - dask-jobqueue>=0.3
+  - h5py
+  - joblib
+  - lxml
+  - matplotlib
+  - numpy
+  - pyaps3>=0.3
+  - pykml>=0.2
+  - pyproj
+  - pyresample
+  - pysolid
+  - rich
+  - scikit-image
+  - scipy
+  - shapely
+  - utm
