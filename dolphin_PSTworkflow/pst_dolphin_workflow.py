@@ -1,32 +1,38 @@
 #!/usr/bin/env python3
 """Tools for accessing PST CSLC bursts and executing dolphin workflow"""
 
+# Standard library imports
 import argparse
 import ast
 import datetime
 import subprocess
+import sys
 import time
 from pathlib import Path
 
+# Related third-party imports
 import boto3
+import geopandas as gpd
+import pandas as pd
 from botocore import UNSIGNED
 from botocore.config import Config
-
-import geopandas as gpd
-
-import pandas as pd
-
 from shapely.geometry import box
-
 from tqdm import tqdm
 
+# Add the src directory to sys.path
+sys.path.append(str(Path(__file__).parent / 'src'))
+
+# Local application/library specific imports
 from dolphin.io import get_raster_bounds, get_raster_crs
-
 from dolphin.utils import prepare_geometry
-
 from dolphin.workflows import _cli_config as dconfig
 from dolphin.workflows import _cli_run as drun
-from dolphin.workflows import stitching_bursts, unwrapping, config
+from dolphin.workflows import config, stitching_bursts, unwrapping
+from dolphin.workflows.displacement import run_timeseries
+from dem_stitcher.stitcher import stitch_dem
+from pst_dolphin_utils import create_external_files
+from tile_mate import get_raster_from_tiles
+from tile_mate.stitcher import DATASET_SHORTNAMES
 
 
 def create_parser():
@@ -92,6 +98,22 @@ def create_parser():
                         default='./', help='Specify output directory')
     parser.add_argument('-verbose', '--verbose', action='store_true',
                         dest='verbose', help='Toggle verbose mode on')
+    parser.add_argument('--water-mask-file', dest='water_mask_file', type=str,
+                        default=None,
+                        help='Specify either path to valid water mask, or '
+                             'download using one of the following '
+                             f'data sources: {DATASET_SHORTNAMES}')
+    parser.add_argument('--dem-file', dest='dem_file', type=str,
+                        default=None,
+                        help='Specify either path to valid DEM, or '
+                             'download using one of the following data '
+                             'sources: srtm_v3, nasadem, glo_30, glo_90 '
+                             'glo_90_missing')
+    parser.add_argument('--correlation-threshold',
+                        dest='correlation_threshold', type=float,
+                        default=0.2,
+                        help='Specify the correlation threshold '
+                             'for TS mode')
 
     return parser
 
@@ -161,6 +183,9 @@ def access_cslcs(inps=None):
     n_parallel_jobs = inps.n_parallel_jobs
     n_parallel_tiles = inps.n_parallel_tiles
     ntiles = (inps.ntiles, inps.ntiles)
+    water_mask_file = inps.water_mask_file
+    dem_file = inps.dem_file
+    correlation_threshold = inps.correlation_threshold
     if orbit_pass:
         if orbit_pass[:3].lower() == 'asc':
             orbit_pass = 'Ascending'
@@ -306,8 +331,8 @@ def access_cslcs(inps=None):
                               n_parallel_bursts=1,
                               threads_per_worker=threads_per_worker,
                               enable_gpu=True,
-                              mask_file=None
-                              no_unwrap=True)
+                              no_unwrap=True,
+                              no_inversion=True)
         # run dolphin
         drun.run(str(yml_file))
         # delete CSLCs to save space
@@ -317,6 +342,11 @@ def access_cslcs(inps=None):
                        text=True, check=True)
         # delete burst unw IFGs to save space
         process_cmd = f'rm -rf {str(dolphin_dir_burst)}/unwrapped'
+        subprocess.run(process_cmd, shell=True,
+                       cwd=out_dir, capture_output=True,
+                       text=True, check=True)
+        # delete burst unw IFGs to save space
+        process_cmd = f'rm -rf {str(dolphin_dir_burst)}/timeseries'
         subprocess.run(process_cmd, shell=True,
                        cwd=out_dir, capture_output=True,
                        text=True, check=True)
@@ -330,32 +360,51 @@ def access_cslcs(inps=None):
     # only access looked file if applicable
     if strides == ['1', '1']:
         ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels.tif'))
+        amp_dispersion_list = \
+            list(dolphin_dir.glob('t*/PS/amp_dispersion.tif'))
     else:
         ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels_looked.tif'))
+        amp_dispersion_list = \
+            list(dolphin_dir.glob('t*/PS/amp_dispersion_looked.tif'))
     cfg_obj = config.DisplacementWorkflow.from_yaml(yml_file)
     (
         stitched_ifg_paths,
         stitched_cor_paths,
         _,
         _,
+        stitched_amp_dispersion_file,
     ) = stitching_bursts.run(
         ifg_file_list=ifg_paths,
         temp_coh_file_list=coh_paths,
         ps_file_list=ps_file_list,
+        amp_dispersion_list=amp_dispersion_list,
         stitched_ifg_dir=stitched_ifg_path,
         output_options=cfg_obj.output_options,
         file_date_fmt='%Y%m%d',
         corr_window_size=(11, 11),
     )
     #
-    # generate geometry files
-    dem_file = None #!#
+    # generate mask file
     geometry_dir = stitched_ifg_path / 'geometry'
     geometry_dir.mkdir(exist_ok=True)
     geometry_files = sorted(Path(static_dir).glob("*STATIC_*.h5"))
     crs = get_raster_crs(stitched_ifg_paths[0])
     epsg = crs.to_epsg()
     out_bounds = get_raster_bounds(stitched_ifg_paths[0])
+    if water_mask_file is not None:
+        if not Path(inps.water_mask_file).exists():
+            water_mask_file = create_external_files(water_mask_file,
+               stitched_ifg_paths[0], out_bounds, crs, geometry_dir,
+               maskfile=True)
+    #
+    # generate DEM file
+    if dem_file is not None:
+        if not Path(inps.dem_file).exists():
+            dem_file = create_external_files(dem_file,
+               stitched_ifg_paths[0], out_bounds, crs, geometry_dir,
+               demfile=True)
+    #
+    # generate geometry files
     frame_geometry_files = prepare_geometry(
         geometry_dir=geometry_dir,
         geo_files=geometry_files,
@@ -366,7 +415,7 @@ def access_cslcs(inps=None):
         strides=cfg_obj.output_options.strides
     )
     #
-    # unwrap stitched unw
+    # unwrap stitched ifg
     row_looks, col_looks = cfg_obj.phase_linking.half_window.to_looks()
     nlooks = row_looks * col_looks
     # set unw options
@@ -375,12 +424,28 @@ def access_cslcs(inps=None):
     unwrap_options.ntiles = ntiles
     unwrap_options.n_parallel_jobs = n_parallel_jobs
     unwrap_options.n_parallel_tiles = n_parallel_tiles
-    unwrapping.run(
+    unwrapped_paths, conncomp_paths = unwrapping.run(
         ifg_file_list=stitched_ifg_paths,
         cor_file_list=stitched_cor_paths,
         nlooks=nlooks,
         unwrap_options=unwrap_options,
-        mask_file=cfg_obj.mask_file,
+        mask_file=water_mask_file,
+    )
+    #
+    # go through final time-series stage
+    ts_opts = cfg.timeseries_options
+    ts_opts.run_inversion = False
+    ts_opts.run_velocity = True
+    ts_opts._directory = stitched_ifg_path / 'timeseries'
+    ts_opts._velocity_file = ts_opts._directory / 'velocity.tif'
+    ts_opts.correlation_threshold = correlation_threshold
+    inverted_phase_paths = run_timeseries(
+        ts_opts=ts_opts,
+        unwrapped_paths=unwrapped_paths,
+        conncomp_paths=conncomp_paths,
+        cor_paths=stitched_cor_paths,
+        stitched_amp_dispersion_file=stitched_amp_dispersion_file,
+        num_threads=threads_per_worker
     )
 
     return
