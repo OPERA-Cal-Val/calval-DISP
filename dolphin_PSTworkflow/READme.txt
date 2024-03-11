@@ -2,6 +2,11 @@ After installing dolphin, update the environment to reflect
 mintpy requirements as so:
 conda env update --name dolphin-env  --file extra_dependencies.yml
 
+Initialize `git-lfs` module and re-pull from repo in order to access large CSV file mapping PST S3 database
+git lfs install
+cd ../
+git lfs pull
+
 Using the big island of Hawaii as a case example, 
 run the dolphin workflow and generate a velocity fit to the 
 derived time-series in 3 steps:
