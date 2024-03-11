@@ -10,6 +10,7 @@ dependencies:
   - dask-jobqueue>=0.3
   - dem_stitcher
   - geopandas
+  - git-lfs
   - h5py
   - joblib
   - lxml
