@@ -30,8 +30,6 @@ across 2 parallel tiles and using 4 threads per worker:
 -u "pst_output/dolphin_output/stitched_interferograms/*.unw.tif"
 --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
 --single-reference
---water-mask-file pst_output/dolphin_output/stitched_interferograms/geometry/esa_world_cover_2021_mask.tif
---dem-file pst_output/dolphin_output/stitched_interferograms/geometry/glo_30_DEM.tif
 -o mintpy_output
 
 3. Generate velocity fit:
