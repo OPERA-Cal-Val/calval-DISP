@@ -30,7 +30,7 @@ sys.path.append(str(Path(__file__).parent / 'src'))
 from dolphin import io
 from dolphin.io import get_raster_bounds, get_raster_crs
 from dolphin.utils import full_suffix, prepare_geometry
-from mintpy.cli import temporal_average, reference_point
+from mintpy.cli import temporal_average, reference_point, timeseries2velocity
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
 from pst_dolphin_utils import create_external_files
@@ -622,12 +622,26 @@ def main(iargs=None):
             inps.water_mask_file = create_external_files(inps.water_mask_file,
                unw_files[0], out_bounds, crs, inps.out_dir,
                maskfile=True)
+    # check if mask file already generated through dolphin
+    else:
+        msk_file = geometry_dir.glob('*_mask.tif')
+        msk_file = [i for i in msk_file]
+        if len(msk_file) > 0:
+            inps.water_mask_file = msk_file[0]
+            print(f"Found water mask file {inps.water_mask_file}")
     # create DEM, if not specified
     if inps.dem_file is not None:
         if not Path(inps.dem_file).exists():
             inps.dem_file = create_external_files(inps.dem_file,
                unw_files[0], out_bounds, crs, inps.out_dir,
                demfile=True)
+    # check if mask file already generated through dolphin
+    else:
+        dem_file = geometry_dir.glob('*_DEM.tif')
+        dem_file = [i for i in dem_file]
+        if len(dem_file) > 0:
+            inps.dem_file = dem_file[0]
+            print(f"Found DEM file {inps.dem_file}")
 
     # create geometry files, if they do not exist
     if not any(geometry_dir.iterdir()):
@@ -701,6 +715,11 @@ def main(iargs=None):
     # if not specified, chose automatic reference point from coherence file
     iargs = [ts_file, '-c', coh_file, '-m maxCoherence']
     reference_point.main(iargs)
+
+    # generate velocity fit
+    vel_file = os.path.join(inps.out_dir, "velocity.h5")
+    iargs = [ts_file, '-o', vel_file]
+    timeseries2velocity.main(iargs)
 
     print("Done.")
     return
