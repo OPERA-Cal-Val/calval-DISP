@@ -332,7 +332,8 @@ def access_cslcs(inps=None):
                               threads_per_worker=threads_per_worker,
                               enable_gpu=True,
                               no_unwrap=True,
-                              no_inversion=True)
+                              no_inversion=True,
+                              zero_where_masked=True)
         # run dolphin
         drun.run(str(yml_file))
         # delete CSLCs to save space
@@ -424,6 +425,7 @@ def access_cslcs(inps=None):
     unwrap_options.ntiles = ntiles
     unwrap_options.n_parallel_jobs = n_parallel_jobs
     unwrap_options.n_parallel_tiles = n_parallel_tiles
+    unwrap_options.zero_where_masked = True
     unwrapped_paths, conncomp_paths = unwrapping.run(
         ifg_file_list=stitched_ifg_paths,
         cor_file_list=stitched_cor_paths,
@@ -433,7 +435,7 @@ def access_cslcs(inps=None):
     )
     #
     # go through final time-series stage
-    ts_opts = cfg.timeseries_options
+    ts_opts = cfg_obj.timeseries_options
     ts_opts.run_inversion = False
     ts_opts.run_velocity = True
     ts_opts._directory = stitched_ifg_path / 'timeseries'
