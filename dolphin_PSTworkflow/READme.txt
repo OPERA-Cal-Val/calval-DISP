@@ -1,5 +1,18 @@
+First the following to your `.bashrc`, with a valid path `/u/data-drive/username/scratch` specified.
+This is where temporary outputs from dolphin will be written to and managed
+export TMPDIR="/u/data-drive/username/scratch"
+export TMP=$TMPDIR
+export TEMP=$TMPDIR
+
+Rerun bash to refresh your environment
+
+Then initiate a new environment called dolphin-env and install dolphin inside of it,
+activate the environment when done
+conda create --name dolphin-env dolphin
+conda activate dolphin-env
+
 After installing dolphin, update the environment to reflect 
-mintpy requirements as so:
+other workflow prerequisites as so:
 conda env update --name dolphin-env  --file extra_dependencies.yml
 
 Initialize `git-lfs` module and re-pull from repo in order to access large CSV file mapping PST S3 database
