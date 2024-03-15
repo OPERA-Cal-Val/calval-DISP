@@ -99,12 +99,12 @@ def create_parser():
     parser.add_argument('-verbose', '--verbose', action='store_true',
                         dest='verbose', help='Toggle verbose mode on')
     parser.add_argument('--water-mask-file', dest='water_mask_file', type=str,
-                        default=None,
+                        default='esa_world_cover_2021',
                         help='Specify either path to valid water mask, or '
                              'download using one of the following '
                              f'data sources: {DATASET_SHORTNAMES}')
     parser.add_argument('--dem-file', dest='dem_file', type=str,
-                        default=None,
+                        default='glo_30',
                         help='Specify either path to valid DEM, or '
                              'download using one of the following data '
                              'sources: srtm_v3, nasadem, glo_30, glo_90 '
