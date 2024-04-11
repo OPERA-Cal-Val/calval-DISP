@@ -44,6 +44,3 @@ across 2 parallel tiles and using 4 threads per worker:
 --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
 --single-reference
 -o mintpy_output
-
-3. Generate velocity fit:
-timeseries2velocity.py mintpy_output/timeseries.h5 -o mintpy_output/velocity.h5
