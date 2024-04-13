@@ -1,37 +1,31 @@
 # create environment : conda env create -f environment.yml
-name: atbd
+name: calval_disp
 channels:
   - conda-forge
   - defaults
 dependencies:
-  - python>=3.8
   - asf_search
-  - cartopy
+  - awscli
+  - dem_stitcher>=2.5.0
   - gdal>=3.4.1
   - geopandas
   - h5py
   - joblib
+  - jupyter_contrib_nbextensions
+  - jupyterlab
   - matplotlib
-  - mintpy
+  - nbdime
   - netcdf4
   - numpy
   - pandas
-  - xarray
-  - rasterio
-  - rioxarray
+  - papermill
   - pip
   - pyproj
+  - rasterio
   - requests
+  - rioxarray
   - scipy>1.10.0
-  - mintpy
   - shapely
+  - s3fs
   - wget
-  - awscli
-  - nbdime
-  #for ARIA-tools-docs
-  - jupyterlab
-  - jupyter_contrib_nbextensions
-  - jupyter_nbextensions_configurator
-  - dem_stitcher>=2.5.0
-  - pip:
-    - rise
+  - xarray

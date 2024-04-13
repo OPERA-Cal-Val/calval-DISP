@@ -12,6 +12,7 @@ from pathlib import Path
 
 # Related third-party imports
 import boto3
+import fsspec
 import geopandas as gpd
 import pandas as pd
 from botocore import UNSIGNED
@@ -169,9 +170,10 @@ def access_cslcs(inps=None):
         Custom Dolphin workflow to access and leverage PST CSLCs
     """
     # Initialize variables and workspace
-    csv_path = Path(__file__).parent / 'data'
-    csv_path = csv_path / \
-               'getallbursts_table_validation_bursts_target_v1.0.csv'
+    csv_path = (
+    's3://opera-provisional-products/DISP/DISP-S1/validation_data/'
+    'getallbursts_table_validation_bursts_target_v1.0.csv'
+    )
     start_date = inps.start_date
     end_date = inps.end_date
     fixed_or_range = inps.fixed_or_range
@@ -230,7 +232,8 @@ def access_cslcs(inps=None):
 
     #
     # Open and setup dataframe
-    df = pd.read_csv(csv_path)
+    s3f = fsspec.open(csv_path, anon=True, default_fill_cache=False)
+    df = pd.read_csv(s3f.open())
     # parse geometry
     df = gpd.GeoDataFrame(
         df.loc[:, [c for c in df.columns if c != 'geometry']],

@@ -1,4 +1,6 @@
-First the following to your `.bashrc`, with a valid path `/u/data-drive/username/scratch` specified.
+* Note, copy/replace '/u/data-drive/username/' with your own preferred installation path.
+
+Add the following to your `.bashrc`, with a valid path `/u/data-drive/username/scratch` specified.
 This is where temporary outputs from dolphin will be written to and managed
 export TMPDIR="/u/data-drive/username/scratch"
 export TMP=$TMPDIR
@@ -6,14 +8,33 @@ export TEMP=$TMPDIR
 
 Rerun bash to refresh your environment
 
-Then initiate a new environment called dolphin-env and install dolphin inside of it,
-activate the environment when done
-conda create --name dolphin-env dolphin
-conda activate dolphin-env
+We recommend using the Miniforge conda environment manager, which uses conda-forge as its default code repo
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh -b -p miniforge
+miniforge/bin/mamba init bash
+conda activate base
 
-After installing dolphin, update the environment to reflect 
+First install the main repository dependencies
+cd miniforge
+mamba env create -f environment.yml
+conda activate calval_disp
+
+After initializing the, update the environment to reflect 
 other workflow prerequisites as so:
-conda env update --name dolphin-env  --file extra_dependencies.yml
+
+First clone this repo and add it to your path
+cd /u/data-drive/username/
+git clone https://github.com/OPERA-Cal-Val/calval-DISP.git
+setenv PATH ${PATH}:/u/data-drive/username/calval-DISP/dolphin_PSTworkflow
+
+# then install and initialize MintPy build
+git clone https://github.com/insarlab/MintPy.git
+mamba install --channel conda-forge --file MintPy/requirements.txt
+export MINTPY_HOME=/u/data-drive/username/MintPy
+export PYTHONPATH=/u/data-drive/username/src
+export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
+# then install dolphin-related dependencies
+mamba env update --file dolphin_PSTworkflow/extra_dependencies.yml
 
 Initialize `git-lfs` module and re-pull from repo in order to access large CSV file mapping PST S3 database
 git lfs install

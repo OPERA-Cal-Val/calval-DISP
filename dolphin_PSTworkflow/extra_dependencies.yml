@@ -1,35 +1,22 @@
-name: dolphin-env
+name: calval_disp
 channels:
   - conda-forge
 dependencies:
   - argcomplete
   - boto3
-  - cartopy
   - cvxopt
   - dask>=1.0
   - dask-jobqueue>=0.3
-  - dem_stitcher
-  - geopandas
-  - git-lfs
+  - dolphin
   - h5py
   - joblib
   - lxml
-  - matplotlib
-  - mintpy
   - numpy
-  - pandas
-  - pip
-  - pyaps3>=0.3
   - pykml>=0.2
   - pyproj
-  - pyresample
-  - pysolid
   - rich
   - scikit-image
-  - scipy
-  - shapely
   - snaphu
   - tile_mate
   - tophu
   - tqdm
-  - utm
