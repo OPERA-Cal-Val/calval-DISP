@@ -190,6 +190,11 @@ def prepare_metadata(meta_file, int_file, nlks_x=1, nlks_y=1):
     crs = io.get_raster_crs(int_file)
     meta["EPSG"] = crs.to_epsg()
 
+    if str(meta["EPSG"]).startswith('326'):
+         meta["UTM_ZONE"] = str(meta["EPSG"])[3:] + 'N'
+    else:
+         meta["UTM_ZONE"] = str(meta["EPSG"])[3:] + 'S'
+
     if "/science" in meta_compass:
         root = "/science/SENTINEL1/CSLC"
         processing_ds = f"{root}/metadata/processing_information"

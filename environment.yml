@@ -29,5 +29,6 @@ dependencies:
   - scipy>1.10.0
   - shapely
   - s3fs
+  - utm
   - wget
   - xarray
