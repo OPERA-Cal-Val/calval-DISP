@@ -7,13 +7,13 @@ Repository of tools to leverage the dolphin software to produce pseudo- OPERA Su
 1. [Installation](#installation)
     -   [Initial environment setup](#initial-environment-setup)
     -   [Setup conda](#setup-conda)
-    -   [Install main repository dependencies](#install-main-dependencies)
-    -   [Install development version of MintPy](#install-MintPy)
-    -   [Clone ATBD repo](#atbd-repo)
-2. [Running dolphin workflow](#dolphin-pst-routine)
-    -   [Run PST dolphin tool](#run-pst-dolphin)
-    -   [Run MintPy preparation tool](#mintpy-prep)
-3. [Running validation notebook](#validation-notebook)
+    -   [Install main repository dependencies](#install-main-repository-dependencies)
+    -   [Install development version of MintPy](#install-development-version-of-MintPy)
+    -   [Clone ATBD repo](#clone-ATBD-repo)
+2. [Running dolphin workflow](#running-dolphin-workflow)
+    -   [Run PST dolphin tool](#run-pst-dolphin-tool)
+    -   [Run MintPy preparation tool](#run-MintPy-preparation-tool)
+3. [Running validation notebook](#running-validation-notebook)
 
 ------
 ## Installation
