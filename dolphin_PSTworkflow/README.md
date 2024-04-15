@@ -5,11 +5,15 @@ Repository of tools to leverage the dolphin software to produce pseudo- OPERA Su
 ## Contents
 
 1. [Installation](#installation)
+    -   [Initial environment setup](#initial-environment-setup)
+    -   [Setup conda](#setup-conda)
+    -   [Install main repository dependencies](#install-main-dependencies)
+    -   [Install development version of MintPy](#install-MintPy)
+    -   [Clone ATBD repo](#atbd-repo)
 2. [Running dolphin workflow](#dolphin-pst-routine)
+    -   [Run PST dolphin tool](#run-pst-dolphin)
+    -   [Run MintPy preparation tool](#mintpy-prep)
 3. [Running validation notebook](#validation-notebook)
-    -   [InSAR LOS velocity estimation](#insar-los-velocity-estimation)
-    -   [Validation data LOS velocity estimation](#validation-data-los-velocity-estimation)
-    -   [Statistical analyses](#statistical-analyses)
 
 ------
 ## Installation
@@ -39,7 +43,7 @@ miniforge/bin/mamba init bash
 conda activate base
 ```
 
-### Install main repository dependencies and add repo tools to your path
+### Install main repository dependencies
 ```.bash
 cd /u/data-drive/username/
 git clone https://github.com/OPERA-Cal-Val/calval-DISP.git
@@ -49,7 +53,7 @@ conda activate calval_disp
 # install extra dolphin workflow-related dependencies
 mamba env update --file calval-DISP/dolphin_PSTworkflow/extra_dependencies.yml --name calval_disp
 
-# set path
+# add repo tools to your path
 export PATH=${PATH}:/u/data-drive/username/calval-DISP/dolphin_PSTworkflow"
 ```
 
@@ -62,9 +66,10 @@ export PYTHONPATH=/u/data-drive/username/src
 export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
 ```
 
-### Clone ATBD repo and set paths to prerequisite tools
+### Clone ATBD repo
 ```.bash
 git clone https://github.com/nisar-solid/ATBD.git
+# set paths to prerequisite tools
 export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/ATBD"
 ```
 
@@ -73,7 +78,9 @@ export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/ATBD"
 
 Using the big island of Hawaii as a case example, run the dolphin workflow and generate a velocity fit to the derived time-series in 2 steps:
 
-1.	Process IFGs spanning from 20221001 to 20230701 across a descending track, download and use the `esa_world_cover_2021` water mater, download the `glo_30` DEM, using the recommended faster `phass` unwrapping option, and perform some basic parallelization with 2 parallel jobs, across 2 parallel tiles and using 4 threads per worker:
+### Run PST dolphin tool
+
+Process IFGs spanning from 20221001 to 20230701 across a descending track, download and use the `esa_world_cover_2021` water mater, download the `glo_30` DEM, using the recommended faster `phass` unwrapping option, and perform some basic parallelization with 2 parallel jobs, across 2 parallel tiles and using 4 threads per worker:
 
 ```.bash
 pst_dolphin_workflow.py 
@@ -84,7 +91,9 @@ pst_dolphin_workflow.py
 -o pst_output --unwmethod phass
 ```
 
-2.	Prep prerequisite MintPy inputs needed to generate a velocity field:
+### Run MintPy preparation tool
+
+Prep prerequisite MintPy inputs needed to generate a velocity field:
 ```.bash
 prep_mintpy.py
 -m pst_output/static_CSLCs/
