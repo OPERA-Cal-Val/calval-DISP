@@ -33,6 +33,7 @@ from dolphin.utils import full_suffix, prepare_geometry
 from mintpy.cli import temporal_average, reference_point, timeseries2velocity
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
+from mintpy.utils.utils0 import azimuth2heading_angle
 from pst_dolphin_utils import create_external_files
 from tile_mate import get_raster_from_tiles
 from tile_mate.stitcher import DATASET_SHORTNAMES
@@ -168,7 +169,7 @@ def cmd_line_parse(iargs=None):
     return inps
 
 
-def prepare_metadata(meta_file, int_file, nlks_x=1, nlks_y=1):
+def prepare_metadata(meta_file, int_file, geom_dir, nlks_x=1, nlks_y=1):
     """Get the metadata from the GSLC metadata file and the unwrapped interferogram."""
     print("-" * 50)
 
@@ -210,6 +211,22 @@ def prepare_metadata(meta_file, int_file, nlks_x=1, nlks_y=1):
     meta["RANGE_PIXEL_SIZE"] = meta_compass[f"{burst_ds}/range_pixel_spacing"][()]
     meta["AZIMUTH_PIXEL_SIZE"] = 14.1
     meta["EARTH_RADIUS"] = 6371000.0
+
+    # get heading from azimuth angle
+    geom_path = Path(geom_dir)
+    file_to_path = {
+        "los_east": geom_path / "los_east.tif",
+        "los_north": geom_path / "los_north.tif",
+    }
+    dsDict = {}
+    for dsName, fname in file_to_path.items():
+        data = readfile.read(fname, datasetName=dsName)[0]
+        data[data == 0] = np.nan
+        dsDict[dsName] = data
+    azimuth_angle, _, _ = get_azimuth_ang(dsDict)
+    azimuth_angle = np.nanmean(azimuth_angle)
+    heading = azimuth2heading_angle(azimuth_angle)
+    meta["HEADING"] = heading
 
     t0 = datetime.datetime.strptime(
         meta_compass[f"{burst_ds}/sensing_start"][()].decode("utf-8"),
@@ -343,6 +360,14 @@ def _get_date_pairs(filenames):
     return [str(f).replace(full_suffix(f), "") for f in str_list]
 
 
+def get_azimuth_ang(dsDict):
+    """Compute the azimuth angle from east/north coefficients"""
+    east = dsDict["los_east"]
+    north = dsDict["los_north"]
+    azimuth_angle = calc_azimuth_from_east_north_obs(east, north)
+    return azimuth_angle, east, north
+
+
 def prepare_timeseries(
     outfile,
     unw_files,
@@ -426,9 +451,7 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
 
     geom_path = Path(geom_dir)
     # copy metadata to meta
-    print('metadata', metadata)
     meta = {key: value for key, value in metadata.items()}
-    print('meta', meta)
     meta["FILE_TYPE"] = "geometry"
 
     file_to_path = {
@@ -443,7 +466,6 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
 
     dsDict = {}
     for dsName, fname in file_to_path.items():
-        print('fname', fname)
         try:
             data = readfile.read(fname, datasetName=dsName)[0]
             # TODO: add general functionality to handle nodata into Mintpy
@@ -456,9 +478,7 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
             print(f"Skipping {fname}: {e}")
 
     # Compute the azimuth and incidence angles from east/north coefficients
-    east = dsDict["los_east"]
-    north = dsDict["los_north"]
-    azimuth_angle = calc_azimuth_from_east_north_obs(east, north)
+    azimuth_angle, east, north = get_azimuth_ang(dsDict)
     dsDict["azimuthAngle"] = azimuth_angle
 
     up = np.sqrt(1 - east**2 - north**2)
@@ -481,7 +501,6 @@ def prepare_temporal_coherence(outfile, infile, metadata):
 
     data = io.load_gdal(infile)
 
-    print(data.shape)
     # write to HDF5 file
     writefile.write(data, outfile, metadata=meta)
     return outfile
@@ -676,7 +695,8 @@ def main(iargs=None):
             raise ValueError(f"No static layers file found in {meta_file}")
 
     meta = prepare_metadata(
-        meta_file, unw_files[0], nlks_x=inps.lks_x, nlks_y=inps.lks_y
+        meta_file, unw_files[0], geom_dir=inps.geom_dir,
+        nlks_x=inps.lks_x, nlks_y=inps.lks_y
     )
 
     # output directory
