@@ -68,7 +68,10 @@ export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
 
 ### Clone ATBD repo
 ```.bash
-git clone https://github.com/nisar-solid/ATBD.git
+###NOTE temp redirect to PR for UTM coordinate bug fix
+git clone https://github.com/sssangha/ATBD.git
+cd ATBD
+git checkout sss_transectnans
 # set paths to prerequisite tools
 export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/ATBD"
 ```
