@@ -30,7 +30,8 @@ sys.path.append(str(Path(__file__).parent / 'src'))
 from dolphin import io
 from dolphin.io import get_raster_bounds, get_raster_crs
 from dolphin.utils import full_suffix, prepare_geometry
-from mintpy.cli import temporal_average, reference_point, timeseries2velocity
+from mintpy.cli import temporal_average, reference_point, mask, \
+    timeseries2velocity
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
 from mintpy.utils.utils0 import azimuth2heading_angle
@@ -151,6 +152,15 @@ def _create_parser():
         help="Specify either path to valid DEM, or download "
              "using one of the following data sources: srtm_v3, "
              "nasadem, glo_30, glo_90, glo_90_missing",
+    )
+    parser.add_argument(
+        "--ref-lalo",
+        dest="ref_lalo",
+        type=str,
+        default=None,
+        help="Specify 'latitute longitude' of desired reference point. "
+             "By default the pixel with the highest spatial coherence "
+             "is selected",
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -738,8 +748,22 @@ def main(iargs=None):
 
 
     # if not specified, chose automatic reference point from coherence file
-    iargs = [ts_file, '-c', coh_file, '-m maxCoherence']
+    if inps.ref_lalo is not None:
+        ref_lat, ref_lon = inps.ref_lalo.split()
+        iargs = [ts_file, '-l', ref_lat, '-L', ref_lon]
+    else:
+        iargs = [ts_file, '-c', coh_file, '--method maxCoherence']
+    # add argument for mask
+    if inps.water_mask_file is not None:
+        iargs.extend(['--mask', f'{str(inps.water_mask_file)} waterMask'])
     reference_point.main(iargs)
+
+    # mask TS file, since reference_point adds offset back in masked field
+    if inps.water_mask_file is not None:
+        iargs = [ts_file, '--mask', str(inps.water_mask_file)]
+        mask.main(iargs)
+        # pass masked TS file
+        ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
 
     # generate velocity fit
     vel_file = os.path.join(inps.out_dir, "velocity.h5")
