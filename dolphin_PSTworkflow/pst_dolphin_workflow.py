@@ -28,8 +28,8 @@ from dolphin.io import get_raster_bounds, get_raster_crs
 from dolphin.utils import prepare_geometry
 from dolphin.workflows import _cli_config as dconfig
 from dolphin.workflows import _cli_run as drun
-from dolphin.workflows import config, stitching_bursts, unwrapping
-from dolphin.workflows.displacement import run_timeseries
+from dolphin.workflows import CallFunc, config, stitching_bursts, unwrapping
+from dolphin.workflows.displacement import timeseries
 from dem_stitcher.stitcher import stitch_dem
 from pst_dolphin_utils import create_external_files
 from tile_mate import get_raster_from_tiles
@@ -438,18 +438,17 @@ def access_cslcs(inps=None):
     )
     #
     # go through final time-series stage
-    ts_opts = cfg_obj.timeseries_options
-    ts_opts.run_inversion = False
-    ts_opts.run_velocity = True
-    ts_opts._directory = stitched_ifg_path / 'timeseries'
-    ts_opts._velocity_file = ts_opts._directory / 'velocity.tif'
-    ts_opts.correlation_threshold = correlation_threshold
-    inverted_phase_paths = run_timeseries(
-        ts_opts=ts_opts,
+    inverted_phase_paths = timeseries.run(
+        #ts_opts=ts_opts,
         unwrapped_paths=unwrapped_paths,
         conncomp_paths=conncomp_paths,
-        cor_paths=stitched_cor_paths,
-        stitched_amp_dispersion_file=stitched_amp_dispersion_file,
+        corr_paths=stitched_cor_paths,
+        condition_file=stitched_amp_dispersion_file,
+        condition=CallFunc.MIN,
+        output_dir=stitched_ifg_path / 'timeseries',
+        run_velocity=True,
+        velocity_file=ts_opts._directory / 'velocity.tif',
+        correlation_threshold=correlation_threshold,
         num_threads=threads_per_worker
     )
 

@@ -57,6 +57,16 @@ mamba env update --file calval-DISP/dolphin_PSTworkflow/extra_dependencies.yml -
 export PATH=${PATH}:/u/data-drive/username/calval-DISP/dolphin_PSTworkflow"
 ```
 
+### Install development version of dolphin
+```.bash
+###NOTE temp redirect to PR for UTM coordinate bug fix
+git clone https://github.com/isce-framework/dolphin.git
+cd dolphin
+mamba update --name calval_disp --file requirements.txt
+python -m pip install .
+cd ../
+```
+
 ### Install development version of MintPy
 ```.bash
 git clone https://github.com/insarlab/MintPy.git
@@ -74,6 +84,7 @@ cd ATBD
 git checkout sss_transectnans
 # set paths to prerequisite tools
 export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/ATBD"
+cd ../
 ```
 
 ------
