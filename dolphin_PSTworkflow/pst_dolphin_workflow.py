@@ -439,7 +439,6 @@ def access_cslcs(inps=None):
     #
     # go through final time-series stage
     inverted_phase_paths = timeseries.run(
-        #ts_opts=ts_opts,
         unwrapped_paths=unwrapped_paths,
         conncomp_paths=conncomp_paths,
         corr_paths=stitched_cor_paths,
@@ -447,7 +446,6 @@ def access_cslcs(inps=None):
         condition=CallFunc.MIN,
         output_dir=stitched_ifg_path / 'timeseries',
         run_velocity=True,
-        velocity_file=ts_opts._directory / 'velocity.tif',
         correlation_threshold=correlation_threshold,
         num_threads=threads_per_worker
     )
