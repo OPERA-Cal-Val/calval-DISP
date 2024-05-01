@@ -31,7 +31,7 @@ from dolphin import io
 from dolphin.io import get_raster_bounds, get_raster_crs
 from dolphin.utils import full_suffix, prepare_geometry
 from mintpy.cli import temporal_average, reference_point, mask, \
-    timeseries2velocity
+    generate_mask, timeseries2velocity
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
 from mintpy.utils.utils0 import azimuth2heading_angle
@@ -440,7 +440,7 @@ def prepare_timeseries(
         prog_bar = ptime.progressBar(maxValue=num_file)
         for i, unw_file in enumerate(unw_files):
             # read data using gdal
-            data = io.load_gdal(unw_file) * water_mask
+            data = io.load_gdal(unw_file, masked=True) * water_mask
 
             f["timeseries"][i + 1] = data * phase2range
             prog_bar.update(i + 1, suffix=date12_list[i])
@@ -509,7 +509,7 @@ def prepare_temporal_coherence(outfile, infile, metadata):
     meta["FILE_TYPE"] = "temporalCoherence"
     meta["UNIT"] = "1"
 
-    data = io.load_gdal(infile)
+    data = io.load_gdal(infile, masked=True)
 
     # write to HDF5 file
     writefile.write(data, outfile, metadata=meta)
@@ -527,7 +527,7 @@ def prepare_ps_mask(outfile, infile, metadata):
     meta["UNIT"] = "1"
 
     # read data using gdal
-    data = io.load_gdal(infile)
+    data = io.load_gdal(infile, masked=True)
 
     # write to HDF5 file
     writefile.write(data, outfile, metadata=meta)
@@ -617,19 +617,28 @@ def prepare_stack(
             zip(unw_files, cor_files, cc_files)
         ):
             # read/write *.unw file
-            f["unwrapPhase"][i] = io.load_gdal(unw_file) * water_mask
+            f["unwrapPhase"][i] = io.load_gdal(
+                unw_file, masked=True) * water_mask
 
             # read/write *.cor file
-            f["coherence"][i] = io.load_gdal(cor_file) * water_mask
+            f["coherence"][i] = io.load_gdal(
+                cor_file, masked=True) * water_mask
 
             # read/write *.unw.conncomp file
-            f["connectComponent"][i] = io.load_gdal(cc_file) * water_mask
+            f["connectComponent"][i] = io.load_gdal(
+                cc_file, masked=True) * water_mask
 
             prog_bar.update(i + 1, suffix=date12_list[i])
         prog_bar.close()
 
     print("finished writing to HDF5 file: {}".format(outfile))
-    return outfile
+
+    # generate mask file from unw phase field
+    msk_file = os.path.join(os.path.dirname(outfile), 'combined_msk.h5')
+    iargs = [outfile, 'unwrapPhase', '-o', msk_file, '--nonzero']
+    generate_mask.main(iargs)
+
+    return msk_file
 
 
 def main(iargs=None):
@@ -663,6 +672,7 @@ def main(iargs=None):
         if len(msk_file) > 0:
             inps.water_mask_file = msk_file[0]
             print(f"Found water mask file {inps.water_mask_file}")
+
     # create DEM, if not specified
     if inps.dem_file is not None:
         if not Path(inps.dem_file).exists():
@@ -732,7 +742,7 @@ def main(iargs=None):
                             water_mask_file=inps.water_mask_file)
 
     # prepare ifgstack with connected components
-    prepare_stack(
+    msk_file = prepare_stack(
         outfile=stack_file,
         unw_files=unw_files,
         cor_files=cor_files,
@@ -754,16 +764,14 @@ def main(iargs=None):
     else:
         iargs = [ts_file, '-c', coh_file, '--method maxCoherence']
     # add argument for mask
-    if inps.water_mask_file is not None:
-        iargs.extend(['--mask', f'{str(inps.water_mask_file)} waterMask'])
+    iargs.extend(['--mask', msk_file])
     reference_point.main(iargs)
 
     # mask TS file, since reference_point adds offset back in masked field
-    if inps.water_mask_file is not None:
-        iargs = [ts_file, '--mask', str(inps.water_mask_file)]
-        mask.main(iargs)
-        # pass masked TS file
-        ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
+    iargs = [ts_file, '--mask', msk_file]
+    mask.main(iargs)
+    # pass masked TS file
+    ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
 
     # generate velocity fit
     vel_file = os.path.join(inps.out_dir, "velocity.h5")
