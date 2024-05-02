@@ -89,7 +89,7 @@ cd ../
 ------
 ## Running dolphin workflow
 
-Using the big island of Hawaii as a case example, run the dolphin workflow and generate a velocity fit to the derived time-series in 2 steps:
+Using the big island of Hawaii as a case example, run the dolphin workflow and generate a velocity fit to the derived time-series in 2 steps (NOTE, you can alternatively run this workflow directly through the `validation notebook` below):
 
 ### Run PST dolphin tool
 
@@ -111,8 +111,9 @@ Prep prerequisite MintPy inputs needed to generate a velocity field:
 prep_mintpy.py
 -m pst_output/static_CSLCs/
 -c "pst_output/dolphin_output/stitched_interferograms/*.zeroed.cor.tif"
--u "pst_output/dolphin_output/stitched_interferograms/*.unw.tif"
+-u "pst_output/dolphin_output/stitched_interferograms/*.unw.zeroed.tif"
 --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
+--ref-lalo '19.2485991551617 -155.32285148610057'
 --single-reference
 -o mintpy_output
 ```
@@ -120,7 +121,7 @@ prep_mintpy.py
 ------
 ## Running validation notebook
 
-You can verify whether your case study meets the DISP validation requirements by running the `DISP-S1_dolphin_Requirement_Validation.ipynb`
+You can verify whether your case study meets the DISP validation requirements by running the `DISP-S1_dolphin_Requirement_Validation.ipynb` (and also run the `dolphin workflow` outlined above if you have not already done so separately)
 
 First copy over the source notebook found here `/path/to/calval-DISP/dolphin_PSTworkflow/` to your local working directory:
 ```.bash
