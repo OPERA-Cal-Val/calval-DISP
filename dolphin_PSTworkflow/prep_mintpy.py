@@ -47,7 +47,14 @@ OPERA_DATASET_ROOT = './'
 ####################################################################################
 EXAMPLE = """example:
 
-  python ./prep_mintpy.py -u 'interferograms/unwrapped/*.unw.tif'  -c 'interferograms/stitched/*.cor' -m gslcs/
+  prep_mintpy.py
+      -m pst_output/static_CSLCs/
+      -c "pst_output/dolphin_output/stitched_interferograms/*.zeroed.cor.tif"
+      -u "pst_output/dolphin_output/stitched_interferograms/*.unw.zeroed.tif"
+      --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
+      --ref-lalo '19.2485991551617 -155.32285148610057'
+      --single-reference
+      -o mintpy_output
 
 """  # noqa: E501
 
