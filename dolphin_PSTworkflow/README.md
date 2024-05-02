@@ -59,7 +59,6 @@ export PATH=${PATH}:/u/data-drive/username/calval-DISP/dolphin_PSTworkflow"
 
 ### Install development version of dolphin
 ```.bash
-###NOTE temp redirect to PR for UTM coordinate bug fix
 git clone https://github.com/isce-framework/dolphin.git
 cd dolphin
 mamba update --name calval_disp --file requirements.txt
@@ -70,10 +69,6 @@ cd ../
 ### Install development version of MintPy
 ```.bash
 git clone https://github.com/insarlab/MintPy.git
-cd MintPy
-###NOTE temp redirect to stable revision before major code overhaul
-git reset --hard  f3324b8
-cd ../
 mamba update --name calval_disp --file MintPy/requirements.txt
 export MINTPY_HOME=/u/data-drive/username/MintPy
 export PYTHONPATH=/u/data-drive/username/src
