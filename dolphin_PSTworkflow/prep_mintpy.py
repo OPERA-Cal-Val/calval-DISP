@@ -169,6 +169,14 @@ def _create_parser():
              "By default the pixel with the highest spatial coherence "
              "is selected",
     )
+    parser.add_argument(
+        "--min-coherence",
+        dest="min_coherence",
+        type=str,
+        default='0.4',
+        help="Specify minimum coherence of reference pixel "
+             "for max-coherence method.",
+    )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
 
@@ -567,6 +575,9 @@ def prepare_stack(
     # get list of *.unw.conncomp file
     cc_files = [str(x).replace(unw_ext, ".unw.conncomp.tif") for x in unw_files]
     cc_files = [x for x in cc_files if Path(x).exists()]
+    if cc_files == []:
+        [i.replace('unwrapped_phase', 'connected_component_labels') \
+         for i in unw_files]
     print(f"number of connected components files: {len(cc_files)}")
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
@@ -657,6 +668,13 @@ def main(iargs=None):
     cor_files = sorted(glob.glob(inps.cor_file_glob))
     print(f"Found {len(cor_files)} correlation files")
 
+    # append appropriate NETCDF prefixes if .nc file
+    if unw_files[0].endswith('.nc'):
+        unw_files = \
+            [f'NETCDF:"{i}":unwrapped_phase' for i in unw_files]
+        cor_files = \
+            [f'NETCDF:"{i}":interferometric_correlation' for i in cor_files]
+
     # get geolocation info
     static_dir = Path(inps.meta_file)
     geometry_dir = Path(inps.geom_dir)
@@ -695,8 +713,13 @@ def main(iargs=None):
             print(f"Found DEM file {inps.dem_file}")
 
     # create geometry files, if they do not exist
+    allcaps_geometry = True
+    geometry_files = sorted(Path(static_dir).glob("*STATIC_*.h5"))
+    # capture alternate filename convention
+    if geometry_files == []:
+        allcaps_geometry = False
+        geometry_files = sorted(Path(static_dir).glob("*static_*.h5"))
     if not any(geometry_dir.iterdir()):
-        geometry_files = sorted(Path(static_dir).glob("*STATIC_*.h5"))
         # create geometry files
         frame_geometry_files = prepare_geometry(
             geometry_dir=geometry_dir,
@@ -716,8 +739,10 @@ def main(iargs=None):
         # Search for the line of sight static_layers file
         try:
             # Grab the first one in in the directory
-            #!#meta_file = next(meta_file.rglob("static_*.h5"))
-            meta_file = next(meta_file.rglob("*STATIC_*.h5"))
+            if allcaps_geometry is True:
+                meta_file = next(meta_file.rglob("*STATIC_*.h5"))
+            else:
+                meta_file = next(meta_file.rglob("static_*.h5"))
         except StopIteration:
             raise ValueError(f"No static layers file found in {meta_file}")
 
@@ -769,7 +794,8 @@ def main(iargs=None):
         ref_lat, ref_lon = inps.ref_lalo.split()
         iargs = [ts_file, '-l', ref_lat, '-L', ref_lon]
     else:
-        iargs = [ts_file, '-c', coh_file, '--method maxCoherence']
+        iargs = [ts_file, '-c', coh_file, '--min-coherence',
+            inps.min_coherence, '--method', 'maxCoherence']
     # add argument for mask
     iargs.extend(['--mask', msk_file])
     reference_point.main(iargs)
