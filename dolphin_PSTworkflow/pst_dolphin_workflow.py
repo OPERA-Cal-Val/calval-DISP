@@ -132,14 +132,14 @@ def cmd_line_parse(iargs=None):
 def filter_consistent_dates(df):
     """
         Filter out dates not common to each date
-        Filter out bursts with less than 2 dates
+        Filter out bursts with less than 3 dates
     """
-    # check if each burst has at least 2 dates
+    # check if each burst has at least 3 dates
     list_of_bursts = list(set(df['burst_id'].to_list()))
     reject_bursts = []
     for i in list_of_bursts:
         all_dates = df['date'][df['burst_id'] == i].to_list()
-        if len(all_dates) < 2:
+        if len(all_dates) < 3:
             reject_bursts.append(i)
     df = df[~df['burst_id'].isin(reject_bursts)]
 
@@ -325,7 +325,7 @@ def access_cslcs(inps=None):
 
 
     # filter by only dates common to each burst
-    # and remove bursts with less than 2 dates
+    # and remove bursts with less than 3 dates
     df = filter_consistent_dates(df)
 
     # Reset the index of the filtered DataFrame
