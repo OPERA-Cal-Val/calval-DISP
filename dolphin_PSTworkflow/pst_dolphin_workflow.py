@@ -129,6 +129,42 @@ def cmd_line_parse(iargs=None):
     return user_inp
 
 
+def filter_consistent_dates(df):
+    """
+        Filter out dates not common to each date
+        Filter out bursts with less than 2 dates
+    """
+    # check if each burst has at least 2 dates
+    list_of_bursts = list(set(df['burst_id'].to_list()))
+    reject_bursts = []
+    for i in list_of_bursts:
+        all_dates = df['date'][df['burst_id'] == i].to_list()
+        if len(all_dates) < 2:
+            reject_bursts.append(i)
+    df = df[~df['burst_id'].isin(reject_bursts)]
+
+    # check if dates are common to all bursts
+    list_of_dates = list(set(df['date'].to_list()))
+    list_of_bursts = list(set(df['burst_id'].to_list()))
+    reject_dates = []
+    for i in list_of_dates:
+        valid_burstlist = df['burst_id'][df['date'] == i].to_list()
+        if len(valid_burstlist) != len(list_of_bursts):
+            reject_dates.append(i)
+    df = df[~df['date'].isin(reject_dates)]
+
+    # one more time check if each burst has at least 2 dates
+    list_of_bursts = list(set(df['burst_id'].to_list()))
+    reject_bursts = []
+    for i in list_of_bursts:
+        all_dates = df['date'][df['burst_id'] == i].to_list()
+        if len(all_dates) < 2:
+            reject_bursts.append(i)
+    df = df[~df['burst_id'].isin(reject_bursts)]
+
+    return df
+
+
 def download_whole_file(url, local_filename, verbose=False):
     """
         Download specified PST CSLCs
@@ -145,6 +181,7 @@ def download_whole_file(url, local_filename, verbose=False):
         s3.download_file(s3_bucket_name, s3_path, local_filename)
         if verbose:
             print(f"Took {time.time() - t0:.3f} seconds for bulk download")
+
     return
 
 
@@ -285,6 +322,11 @@ def access_cslcs(inps=None):
     # filter by track
     if frameid_number:
         df = df[df['frame_ids'].apply(lambda x: frameid_number in x)]
+
+
+    # filter by only dates common to each burst
+    # and remove bursts with less than 2 dates
+    df = filter_consistent_dates(df)
 
     # Reset the index of the filtered DataFrame
     df = df.reset_index(drop=True)
