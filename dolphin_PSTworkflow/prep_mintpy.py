@@ -286,6 +286,90 @@ def prepare_metadata(meta_file, int_file, geom_dir, nlks_x=1, nlks_y=1):
     return meta
 
 
+def invert_diff_corrections(input_filename, output_filename, dataset,
+                            cluster = None, num_workers = '4', waterMask=None,
+                            maskDataset = None, maskThreshold = 0.4):
+    '''
+    Invert differential correction layers to get correction for SAR acquistion dates
+        - the inversion gives corrections relative to the REF_DATE (typically the first acquisition)
+
+    NOTE: 1.the inversion network needs to be connected, otherwise inversion will give wrong estimates 
+            for the isolated clusters
+          2. each SAR date needs to have min two datasets with that date to have min_degree of freedom >=2
+            otherwise inversion will give wrong estimates for those dates
+    '''
+    
+    # create inps dummy
+    class dummy():
+        pass
+    
+    # PREPARE INPUT OBJECT
+    inps = dummy()
+     # input
+    inps.ifgramStackFile = input_filename 
+    inps.obsDatasetName = 'unwrapPhase' #only this available for use at the moment
+    inps.skip_ref = False
+
+    # solver
+    inps.minNormVelocity = False
+    inps.minRedundancy = 1.0 
+    # Note: minRedun set to 2.0 gives wrong estim, and dask has some errors
+    inps.weightFunc = 'no'
+    inps.calcCov = False
+
+    # mask
+    inps.waterMaskFile = waterMask
+    inps.maskDataset = maskDataset
+    inps.maskThreshold = maskThreshold
+
+    # cluster - Expose / leave None for now
+    inps.cluster = cluster
+    inps.maxMemory = 2
+    inps.numWorker = num_workers
+    inps.config = 'local' #not sure what to put here
+
+    # outputs
+    #Avoid setting 'no' for invQualityFile 
+    #self.invQualityFile = 'modelTempCoh.h5' # not needed, maybe leave it to avoid dask outout issues
+    inps.invQualityFile = 'modelTempCoh.h5' 
+    inps.numInvFile = 'numInvModel.h5'
+    inps.tsFile = output_filename
+
+    ### INVERSION
+    from mintpy.utils import readfile
+    from mintpy.cli import reference_point
+    from mintpy.ifgram_inversion import run_ifgram_inversion
+    
+    # remove if exists
+    try:
+        os.remove(inps.tsFile)
+        print('Delete existing file')
+    except FileNotFoundError:
+        print("File is not present in the system.")
+
+    # 1. get reference pixel
+    reference_point.main([inps.ifgramStackFile])
+
+    # 2. invert differential model obs
+    run_ifgram_inversion(inps)
+
+    # 3. compensate for range2phase conversion as not needed for models
+    if dataset.startswith(('tropo', 'solid', 'plate', 'iono')):
+        print('Return back units to original')
+        data, metadata = readfile.read(inps.tsFile, datasetName='timeseries')
+        phase2range = -1 * float(metadata['WAVELENGTH']) / (4.*np.pi)
+        
+        #Replace values
+        with h5py.File(inps.tsFile, 'r+') as f:
+            f['timeseries'][:] = data / phase2range
+    
+    # 4. clean up uncessary files
+    os.remove(inps.invQualityFile)
+    os.remove(inps.numInvFile)
+
+    return
+
+
 def _get_xy_arrays(atr):
     x0 = float(atr["X_FIRST"])
     y0 = float(atr["Y_FIRST"])
@@ -514,35 +598,21 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     return outfile
 
 
-def prepare_temporal_coherence(outfile, infile, metadata):
-    """Prepare the temporal coherence file."""
+def prepare_average_stack(outfile, infiles, water_mask, file_type, metadata):
+    """Average and export specified layers"""
     print("-" * 50)
-    print("preparing temporal coherence file: {}".format(outfile))
+    print("preparing average of stack: {}".format(outfile))
 
     # copy metadata to meta
     meta = {key: value for key, value in metadata.items()}
-    meta["FILE_TYPE"] = "temporalCoherence"
-    meta["UNIT"] = "1"
-
-    data = io.load_gdal(infile, masked=True)
-
-    # write to HDF5 file
-    writefile.write(data, outfile, metadata=meta)
-    return outfile
-
-
-def prepare_ps_mask(outfile, infile, metadata):
-    """Prepare the PS mask file."""
-    print("-" * 50)
-    print("preparing PS mask file: {}".format(outfile))
-
-    # copy metadata to meta
-    meta = {key: value for key, value in metadata.items()}
-    meta["FILE_TYPE"] = "mask"
+    meta["FILE_TYPE"] = file_type # "mask" "temporalCoherence"
     meta["UNIT"] = "1"
 
     # read data using gdal
-    data = io.load_gdal(infile, masked=True)
+    data = []
+    for infile in infiles:
+        data.append(io.load_gdal(infile, masked=True) * water_mask)
+    data = np.nanmean(data, axis=0)
 
     # write to HDF5 file
     writefile.write(data, outfile, metadata=meta)
@@ -573,11 +643,18 @@ def prepare_stack(
     print(cor_files)
 
     # get list of *.unw.conncomp file
-    cc_files = [str(x).replace(unw_ext, ".unw.conncomp.tif") for x in unw_files]
+    cc_files = [str(x).replace(unw_ext, ".unw.conncomp.tif") \
+                for x in unw_files]
     cc_files = [x for x in cc_files if Path(x).exists()]
+
+    # determine if inputs are .nc files with embedded corrections layers
+    nc_input = False
     if cc_files == []:
-        [i.replace('unwrapped_phase', 'connected_component_labels') \
-         for i in unw_files]
+        nc_input = True
+        cc_files = \
+            [i.replace('unwrapped_phase', 'connected_component_labels') \
+             for i in unw_files]
+
     print(f"number of connected components files: {len(cc_files)}")
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
@@ -587,6 +664,7 @@ def prepare_stack(
         if len(unw_files) > len(cor_files):
             print("skip creating ifgramStack.h5 file.")
             return
+
         print("Keeping only cor files which match a unw file")
         unw_dates_set = set([tuple(get_dates(f)) for f in unw_files])
         cor_files = [f for f in cor_files if tuple(get_dates(f)) in unw_dates_set]
@@ -656,6 +734,77 @@ def prepare_stack(
     iargs = [outfile, 'unwrapPhase', '-o', msk_file, '--nonzero']
     generate_mask.main(iargs)
 
+    # if .nc file extract correction layers
+    if nc_input:
+        # Remove dict entries not relevant to correction layers
+        for key in ['coherence', 'connectComponent']:
+            ds_name_dict.pop(key, None)
+
+        # loop through and create files for persistent scatterer
+        ps_files = \
+                [i.replace('unwrapped_phase', 'persistent_scatterer_mask') \
+                 for i in unw_files]
+        ps_fname = os.path.join(os.path.dirname(outfile), 
+            'persistent_scatterer_mask.h5')
+        prepare_average_stack(ps_fname, ps_files, water_mask, 'mask', meta)
+
+        # loop through and create files for temporal coherence
+        tempcoh_files = \
+                [i.replace('unwrapped_phase', 'temporal_coherence') \
+                 for i in unw_files]
+        tempcoh_fname = os.path.join(os.path.dirname(outfile), 
+            'temporalCoherence.h5')
+        prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
+                              'temporalCoherence', meta)
+
+        # loop through and create files for each correction layer
+        correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
+                             'solid_earth_tide', 'plate_motion']
+        for lyr in correction_layers:
+            # get correction layers
+            OG_fname = os.path.join(os.path.dirname(outfile), f'd{lyr}.h5')
+            corr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+            corr_files = \
+                [i.replace('unwrapped_phase', f'/corrections/{lyr}') \
+                 for i in unw_files]
+
+            # initiate file
+            writefile.layout_hdf5(OG_fname, ds_name_dict, metadata=meta)
+
+            # writing data to HDF5 file
+            print("writing data to HDF5 file {} with a mode ...".format( \
+                  corr_fname))
+            with h5py.File(OG_fname, "a") as f:
+                prog_bar = ptime.progressBar(maxValue=num_pair)
+                check_zeros = []
+                for i,corr_file in enumerate(corr_files):
+                    # read/write *.unw file
+                    f["unwrapPhase"][i] = io.load_gdal(
+                        corr_file, masked=True) * water_mask
+                    check_zeros.append(np.nanmean(f["unwrapPhase"][i]))
+
+                    prog_bar.update(i + 1, suffix=date12_list[i])
+                prog_bar.close()
+
+            print("finished writing to HDF5 file: {}".format(corr_fname))
+
+            # only perform inversion if the stack is not full of zeros
+            all_zeros = all(item == 0.0 for item in check_zeros)
+            if not all_zeros:
+                # invert layer to get ionosphere phase delay 
+                # on SAR acquistion dates
+                invert_diff_corrections(OG_fname,
+                                        corr_fname,
+                                        lyr,
+                                        waterMask = None,
+                                        maskDataset = None,
+                                        maskThreshold = 0.4)
+
+                # delete temp file
+                os.remove(OG_fname)
+                print("finished inversion to HDF5 file: {}".format( \
+                      corr_fname))
+
     return msk_file
 
 
@@ -665,15 +814,16 @@ def main(iargs=None):
 
     unw_files = sorted(glob.glob(inps.unw_file_glob))
     print(f"Found {len(unw_files)} unwrapped files")
-    cor_files = sorted(glob.glob(inps.cor_file_glob))
-    print(f"Found {len(cor_files)} correlation files")
-
     # append appropriate NETCDF prefixes if .nc file
     if unw_files[0].endswith('.nc'):
+        cor_files = \
+            [f'NETCDF:"{i}":interferometric_correlation' for i in unw_files]
         unw_files = \
             [f'NETCDF:"{i}":unwrapped_phase' for i in unw_files]
-        cor_files = \
-            [f'NETCDF:"{i}":interferometric_correlation' for i in cor_files]
+    else:
+        cor_files = sorted(glob.glob(inps.cor_file_glob))
+
+    print(f"Found {len(cor_files)} correlation files")
 
     # get geolocation info
     static_dir = Path(inps.meta_file)
