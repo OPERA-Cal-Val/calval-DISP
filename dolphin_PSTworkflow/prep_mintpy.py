@@ -286,90 +286,6 @@ def prepare_metadata(meta_file, int_file, geom_dir, nlks_x=1, nlks_y=1):
     return meta
 
 
-def invert_diff_corrections(input_filename, output_filename, dataset,
-                            cluster = None, num_workers = '4', waterMask=None,
-                            maskDataset = None, maskThreshold = 0.4):
-    '''
-    Invert differential correction layers to get correction for SAR acquistion dates
-        - the inversion gives corrections relative to the REF_DATE (typically the first acquisition)
-
-    NOTE: 1.the inversion network needs to be connected, otherwise inversion will give wrong estimates 
-            for the isolated clusters
-          2. each SAR date needs to have min two datasets with that date to have min_degree of freedom >=2
-            otherwise inversion will give wrong estimates for those dates
-    '''
-    
-    # create inps dummy
-    class dummy():
-        pass
-    
-    # PREPARE INPUT OBJECT
-    inps = dummy()
-     # input
-    inps.ifgramStackFile = input_filename 
-    inps.obsDatasetName = 'unwrapPhase' #only this available for use at the moment
-    inps.skip_ref = False
-
-    # solver
-    inps.minNormVelocity = False
-    inps.minRedundancy = 1.0 
-    # Note: minRedun set to 2.0 gives wrong estim, and dask has some errors
-    inps.weightFunc = 'no'
-    inps.calcCov = False
-
-    # mask
-    inps.waterMaskFile = waterMask
-    inps.maskDataset = maskDataset
-    inps.maskThreshold = maskThreshold
-
-    # cluster - Expose / leave None for now
-    inps.cluster = cluster
-    inps.maxMemory = 2
-    inps.numWorker = num_workers
-    inps.config = 'local' #not sure what to put here
-
-    # outputs
-    #Avoid setting 'no' for invQualityFile 
-    #self.invQualityFile = 'modelTempCoh.h5' # not needed, maybe leave it to avoid dask outout issues
-    inps.invQualityFile = 'modelTempCoh.h5' 
-    inps.numInvFile = 'numInvModel.h5'
-    inps.tsFile = output_filename
-
-    ### INVERSION
-    from mintpy.utils import readfile
-    from mintpy.cli import reference_point
-    from mintpy.ifgram_inversion import run_ifgram_inversion
-    
-    # remove if exists
-    try:
-        os.remove(inps.tsFile)
-        print('Delete existing file')
-    except FileNotFoundError:
-        print("File is not present in the system.")
-
-    # 1. get reference pixel
-    reference_point.main([inps.ifgramStackFile])
-
-    # 2. invert differential model obs
-    run_ifgram_inversion(inps)
-
-    # 3. compensate for range2phase conversion as not needed for models
-    if dataset.startswith(('tropo', 'solid', 'plate', 'iono')):
-        print('Return back units to original')
-        data, metadata = readfile.read(inps.tsFile, datasetName='timeseries')
-        phase2range = -1 * float(metadata['WAVELENGTH']) / (4.*np.pi)
-        
-        #Replace values
-        with h5py.File(inps.tsFile, 'r+') as f:
-            f['timeseries'][:] = data / phase2range
-    
-    # 4. clean up uncessary files
-    os.remove(inps.invQualityFile)
-    os.remove(inps.numInvFile)
-
-    return
-
-
 def _get_xy_arrays(atr):
     x0 = float(atr["X_FIRST"])
     y0 = float(atr["Y_FIRST"])
@@ -497,6 +413,11 @@ def prepare_timeseries(
     num_file = len(unw_files)
     print("number of unwrapped interferograms: {}".format(num_file))
 
+    # determine if inputs are .nc files with embedded corrections layers
+    nc_input = False
+    if '.nc' in unw_files[0]:
+        nc_input = True
+
     date_pairs = [dl.split("_") for dl in date12_list]
     date_list = sorted(set(itertools.chain.from_iterable(date_pairs)))
     # ref_date = date12_list[0].split("_")[0]
@@ -527,10 +448,12 @@ def prepare_timeseries(
     else:
         water_mask = np.ones((rows, cols), dtype=np.float32)
 
-    # initiate HDF5 file
+    # initiate file attributes
     meta["FILE_TYPE"] = "timeseries"
     meta["UNIT"] = "m"
     # meta["REF_DATE"] = ref_date # might not be the first date!
+
+    # initiate HDF5 file
     writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
 
     # writing data to HDF5 file
@@ -549,7 +472,44 @@ def prepare_timeseries(
         f["timeseries"][0] = 0.0
 
     print("finished writing to HDF5 file: {}".format(outfile))
-    return outfile
+
+    all_outputs = [outfile]
+    # if .nc file extract correction layers
+    if nc_input:
+        # loop through and create files for each correction layer
+        correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
+                             'solid_earth_tide', 'plate_motion']
+        for lyr in correction_layers:
+            # get correction layers
+            corr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+            corr_files = \
+                [i.replace('unwrapped_phase', f'/corrections/{lyr}') \
+                 for i in unw_files]
+
+            # initiate file
+            writefile.layout_hdf5(corr_fname, ds_name_dict, metadata=meta)
+
+            # writing data to HDF5 file
+            print("writing data to HDF5 file {} with a mode ...".format( \
+                  corr_fname))
+            with h5py.File(corr_fname, "a") as f:
+                prog_bar = ptime.progressBar(maxValue=num_file)
+                for i,corr_file in enumerate(corr_files):
+                    # read data using gdal
+                    data = io.load_gdal(
+                        corr_file, masked=True) * water_mask
+
+                    f["timeseries"][i + 1] = data * phase2range
+                    prog_bar.update(i + 1, suffix=date12_list[i])
+                prog_bar.close()
+
+                print("set value at the first acquisition to ZERO.")
+                f["timeseries"][0] = 0.0
+
+            print("finished writing to HDF5 file: {}".format(corr_fname))
+            all_outputs.append(corr_fname)
+
+    return all_outputs
 
 
 def mintpy_prepare_geometry(outfile, geom_dir, metadata,
@@ -757,54 +717,6 @@ def prepare_stack(
         prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
                               'temporalCoherence', meta)
 
-        # loop through and create files for each correction layer
-        correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
-                             'solid_earth_tide', 'plate_motion']
-        for lyr in correction_layers:
-            # get correction layers
-            OG_fname = os.path.join(os.path.dirname(outfile), f'd{lyr}.h5')
-            corr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-            corr_files = \
-                [i.replace('unwrapped_phase', f'/corrections/{lyr}') \
-                 for i in unw_files]
-
-            # initiate file
-            writefile.layout_hdf5(OG_fname, ds_name_dict, metadata=meta)
-
-            # writing data to HDF5 file
-            print("writing data to HDF5 file {} with a mode ...".format( \
-                  corr_fname))
-            with h5py.File(OG_fname, "a") as f:
-                prog_bar = ptime.progressBar(maxValue=num_pair)
-                check_zeros = []
-                for i,corr_file in enumerate(corr_files):
-                    # read/write *.unw file
-                    f["unwrapPhase"][i] = io.load_gdal(
-                        corr_file, masked=True) * water_mask
-                    check_zeros.append(np.nanmean(f["unwrapPhase"][i]))
-
-                    prog_bar.update(i + 1, suffix=date12_list[i])
-                prog_bar.close()
-
-            print("finished writing to HDF5 file: {}".format(corr_fname))
-
-            # only perform inversion if the stack is not full of zeros
-            all_zeros = all(item == 0.0 for item in check_zeros)
-            if not all_zeros:
-                # invert layer to get ionosphere phase delay 
-                # on SAR acquistion dates
-                invert_diff_corrections(OG_fname,
-                                        corr_fname,
-                                        lyr,
-                                        waterMask = None,
-                                        maskDataset = None,
-                                        maskThreshold = 0.4)
-
-                # delete temp file
-                os.remove(OG_fname)
-                print("finished inversion to HDF5 file: {}".format( \
-                      corr_fname))
-
     return msk_file
 
 
@@ -909,9 +821,10 @@ def main(iargs=None):
     ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
 
+    all_outputs = [ts_file]
     if inps.single_reference:
         # time-series (if inputs are all single-reference)
-        prepare_timeseries(
+        all_outputs = prepare_timeseries(
             outfile=ts_file,
             unw_files=unw_files,
             metadata=meta,
@@ -940,15 +853,20 @@ def main(iargs=None):
 
 
     # if not specified, chose automatic reference point from coherence file
-    if inps.ref_lalo is not None:
-        ref_lat, ref_lon = inps.ref_lalo.split()
-        iargs = [ts_file, '-l', ref_lat, '-L', ref_lon]
-    else:
-        iargs = [ts_file, '-c', coh_file, '--min-coherence',
-            inps.min_coherence, '--method', 'maxCoherence']
-    # add argument for mask
-    iargs.extend(['--mask', msk_file])
-    reference_point.main(iargs)
+    for og_ts_file in all_outputs:
+        if inps.ref_lalo is not None:
+            ref_lat, ref_lon = inps.ref_lalo.split()
+            iargs = [og_ts_file, '-l', ref_lat, '-L', ref_lon]
+        else:
+            iargs = [og_ts_file, '-c', coh_file, '--min-coherence',
+                inps.min_coherence, '--method', 'maxCoherence']
+        # add argument for mask
+        iargs.extend(['--mask', msk_file])
+        # attempt to rereference TS, will fail if fields are empty
+        try:
+            reference_point.main(iargs)
+        except:
+            pass
 
     # mask TS file, since reference_point adds offset back in masked field
     iargs = [ts_file, '--mask', msk_file]
