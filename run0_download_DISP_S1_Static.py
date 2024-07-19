@@ -20,7 +20,7 @@ from io import BytesIO
 import zipfile
 
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.filterwarnings("ignore")
 
 def createParser(iargs = None):
     '''Commandline input parser'''
