@@ -382,7 +382,19 @@ def write_coordinate_system(
 
 def _get_date_pairs(filenames):
     str_list = [Path(f).stem for f in filenames]
-    return [str(f).replace(full_suffix(f), "") for f in str_list]
+    basenames_noext = [str(f).replace(full_suffix(f), "") for f in str_list]
+
+    # access dates from beta products differently than from golden outputs
+    date_pairs = []
+    for i in basenames_noext:
+        num_parts = i.split('_')
+        if len(num_parts) == 9:
+            date_pair = f'{num_parts[6][:8]}_{num_parts[7][:8]}'
+            date_pairs.append(date_pair)
+        if len(num_parts) == 2:
+            date_pairs.append(i)
+
+    return date_pairs
 
 
 def get_azimuth_ang(dsDict):
@@ -818,14 +830,14 @@ def main(iargs=None):
         os.makedirs(dname, exist_ok=True)
 
     stack_file = os.path.join(inps.out_dir, "inputs/ifgramStack.h5")
-    ts_file = os.path.join(inps.out_dir, "timeseries.h5")
+    og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
 
-    all_outputs = [ts_file]
+    all_outputs = [og_ts_file]
     if inps.single_reference:
         # time-series (if inputs are all single-reference)
         all_outputs = prepare_timeseries(
-            outfile=ts_file,
+            outfile=og_ts_file,
             unw_files=unw_files,
             metadata=meta,
             water_mask_file=inps.water_mask_file,
@@ -853,12 +865,12 @@ def main(iargs=None):
 
 
     # if not specified, chose automatic reference point from coherence file
-    for og_ts_file in all_outputs:
+    for og_ts in all_outputs:
         if inps.ref_lalo is not None:
             ref_lat, ref_lon = inps.ref_lalo.split()
-            iargs = [og_ts_file, '-l', ref_lat, '-L', ref_lon]
+            iargs = [og_ts, '-l', ref_lat, '-L', ref_lon]
         else:
-            iargs = [og_ts_file, '-c', coh_file, '--min-coherence',
+            iargs = [og_ts, '-c', coh_file, '--min-coherence',
                 inps.min_coherence, '--method', 'maxCoherence']
         # add argument for mask
         iargs.extend(['--mask', msk_file])
@@ -869,15 +881,18 @@ def main(iargs=None):
             pass
 
     # mask TS file, since reference_point adds offset back in masked field
-    iargs = [ts_file, '--mask', msk_file]
+    iargs = [og_ts_file, '--mask', msk_file]
     mask.main(iargs)
-    # pass masked TS file
+    # capture masked TS file
     ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
 
     # generate velocity fit
     vel_file = os.path.join(inps.out_dir, "velocity.h5")
-    iargs = [ts_file, '-o', vel_file]
+    iargs = [og_ts_file, '-o', vel_file]
     timeseries2velocity.main(iargs)
+    # mask velocity file
+    iargs = [vel_file, '--mask', msk_file]
+    mask.main(iargs)
 
     print("Done.")
     return
