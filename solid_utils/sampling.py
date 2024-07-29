@@ -1,10 +1,14 @@
 import numpy as np
 import math
 import warnings
+from tqdm import tqdm
+from multiprocessing import Pool
+import psutil
+ncpus = len(psutil.Process().cpu_affinity())
 
 from solid_utils.variogram import remove_trend
 from mintpy.utils import utils as ut
-
+from scipy.interpolate import interp1d
 
 # Seed random number generator for consistency
 np.random.seed(1)
@@ -229,7 +233,6 @@ def samp_pair(x,y,data,num_samples=1000000,deramp=False):
     distance, rel_measure = pair_up(x1d,y1d,data1d)
     return distance, rel_measure
 
-
 def profile_samples(x, y, data, metadata, len_rqmt, num_samples=10000):
     """Similar to samp_pair, randomly select data points and
     retrieve a profile (transection) between those points.
@@ -275,6 +278,7 @@ def profile_samples(x, y, data, metadata, len_rqmt, num_samples=10000):
                                 x_pairs[:,0], y_pairs[:,0],
                                 x_pairs[:,1], y_pairs[:,1]\
                                 )
+
     valid_indices = (dists > len_rqmt[0]) & (dists < len_rqmt[1])
 
     # Filter for data within length requirements
@@ -291,6 +295,7 @@ def profile_samples(x, y, data, metadata, len_rqmt, num_samples=10000):
     # Loop through sample pairs
     dist = np.empty(num_valid_samples)
     rel_measure = np.empty(num_valid_samples)
+
     for i in range(num_valid_samples):
         # Retreive transect
         start_lalo = [y_pairs[i,0], x_pairs[i,0]]
@@ -302,13 +307,6 @@ def profile_samples(x, y, data, metadata, len_rqmt, num_samples=10000):
         transect['distance'] /= 1000
 
         # Solve for fit
-        if transect['distance'].size == 0 or transect['distance'].size == 0:
-            # Store distance and difference values
-            dist[i] = np.nan
-            rel_measure[i] = np.nan
-
-            continue
-
         fit = np.polyfit(transect['distance'], transect['value'], 1)
 
         # Solve for values at profile start and end points
@@ -323,6 +321,9 @@ def profile_samples(x, y, data, metadata, len_rqmt, num_samples=10000):
 
     return dist, rel_measure
 
+def euclidean_distance(start_easting, start_northing, end_easting, end_northing):
+    """Compute the Euclidean distance between two points using UTM coordinates."""
+    return np.sqrt((end_easting - start_easting)**2 + (end_northing - start_northing)**2) / 1000  # Convert to km
 
 def haversine_distance(start_lon, start_lat, end_lon, end_lat):
     """Compute the distance between two points geographic points using
@@ -348,3 +349,82 @@ def haversine_distance(start_lon, start_lat, end_lon, end_lat):
     r = 6378  # Earth's radius
 
     return c * r
+
+def profile_samples_utm(easting, northing, data, len_rqmt, num_samples=10000):
+    # Remove NaN values
+    mask = ~np.isnan(data)
+    data = data[mask]
+    easting = easting[mask]
+    northing = northing[mask]
+
+    # Draw random samples
+    data_sampled, easting_sampled, northing_sampled = rand_samp(data, easting, northing, 2*num_samples)
+
+    # Reshape sample points into pairs
+    easting_pairs, northing_pairs, data_pairs = samps_to_pairs(easting_sampled, northing_sampled, data_sampled)
+
+    # Determine distances between pairs
+    dists = euclidean_distance(easting_pairs[:,0], northing_pairs[:,0],
+                               easting_pairs[:,1], northing_pairs[:,1])
+
+    # Filter for data within length requirements
+    valid_indices = (dists > len_rqmt[0]) & (dists < len_rqmt[1])
+    easting_pairs = easting_pairs[valid_indices]
+    northing_pairs = northing_pairs[valid_indices]
+    num_valid_samples = np.sum(valid_indices)
+
+    print(f'{num_valid_samples} / {num_samples} profiles have valid lengths ({len_rqmt[0]} - {len_rqmt[1]} km)')
+
+    # Prepare inputs for parallel processing
+    inputs = [(easting, northing, data, [easting_pairs[i,0], northing_pairs[i,0]], [easting_pairs[i,1], northing_pairs[i,1]]) for i in range(num_valid_samples)]
+
+    # Use multiprocessing to parallelize the loop
+    with Pool(processes=ncpus) as pool:
+        results = list(tqdm(pool.imap(process_profile, inputs), total=num_valid_samples, desc="Extracting profiles"))
+
+    # Unpack results
+    dist, rel_measure = zip(*results)
+
+    return np.array(dist), np.array(rel_measure)
+
+def process_profile(args):
+    easting, northing, data, start_en, end_en = args
+    transect = transect_utm(easting, northing, data, start_en, end_en)
+
+    # Fit a line to the profile
+    fit = np.polyfit(transect['distance'], transect['value'], 1)
+    endpoint_data = np.poly1d(fit)([0, transect['distance'].max()])
+
+    # Return results
+    return transect['distance'].max(), np.abs(np.diff(endpoint_data)[0])
+
+def transect_utm(easting, northing, data, start_en, end_en, num_points=100):
+    [e0, n0] = start_en
+    [e1, n1] = end_en
+
+    # Create points along the transect line
+    transect_eastings = np.linspace(e0, e1, num_points)
+    transect_northings = np.linspace(n0, n1, num_points)
+
+    # Calculate distances along the transect (in km)
+    distances = np.hypot(transect_eastings - e0, transect_northings - n0) / 1000
+
+    # Create a KD-tree for efficient nearest neighbor search
+    from scipy.spatial import cKDTree
+    tree = cKDTree(np.column_stack((easting, northing)))
+
+    # Find nearest neighbors for each point along the transect
+    _, indices = tree.query(np.column_stack((transect_eastings, transect_northings)))
+
+    # Extract data values for the nearest neighbors
+    transect_values = data[indices]
+
+    # Prepare output
+    transect = {
+        'easting': transect_eastings,
+        'northing': transect_northings,
+        'value': transect_values,
+        'distance': distances
+    }
+
+    return transect
