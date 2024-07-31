@@ -91,7 +91,7 @@ def display_validation(pair_distance: NDArray, pair_difference: NDArray,
    # Add legend with data info
    legend_kwargs = dict(transform=ax.transAxes, verticalalignment='top')
    props = dict(boxstyle='square', facecolor='white', alpha=1, linewidth=0.4)
-   textstr = f'Sensor: {sensor} \n{validation_data}-InSAR point pairs\n'
+   textstr = f'Sensor: {sensor} \n{validation_data}-DISP-S1 point pairs\n'
    textstr += f'Record: {start_date}-{end_date}'
 
    # place a text box in upper left in axes coords
