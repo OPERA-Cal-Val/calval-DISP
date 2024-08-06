@@ -30,6 +30,7 @@ sys.path.append(str(Path(__file__).parent / 'src'))
 from mintpy.cli import temporal_average, reference_point, mask, \
     generate_mask, timeseries2velocity
 from mintpy.utils import arg_utils, ptime, readfile, writefile
+from mintpy.utils import utils as ut
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
 from mintpy.utils.utils0 import azimuth2heading_angle
 from pst_dolphin_utils import create_external_files, get_raster_bounds, \
@@ -589,6 +590,7 @@ def prepare_stack(
     cor_files,
     metadata,
     water_mask_file=None,
+    ref_lalo=None,
     # baseline_dir=None,
 ):
     """Prepare the input unw stack."""
@@ -689,6 +691,23 @@ def prepare_stack(
     msk_file = os.path.join(os.path.dirname(outfile), 'combined_msk.h5')
     iargs = [outfile, 'unwrapPhase', '-o', msk_file, '--nonzero']
     generate_mask.main(iargs)
+    # determine whether the defined reference point is valid
+    if ref_lalo is not None:
+        ref_lat, ref_lon = ref_lalo.split()
+        # get value at coordinate
+        atr = readfile.read_attribute(msk_file)
+        coord = ut.coordinate(atr)
+        (ref_y,
+         ref_x) = coord.geo2radar(np.array(float(ref_lat)),
+                                  np.array(float(ref_lon)))[0:2]
+        with h5py.File(msk_file, 'r') as f:
+            ds = f[atr['FILE_TYPE']]
+            val_at_refpoint = ds[ref_y, ref_x]
+        # exit if reference point is in masked area
+        if val_at_refpoint == False:
+            raise Exception(f'Specified input --ref-lalo {ref_lalo} '
+                            'not in masked region. Inspect output file'
+                            f'{msk_file} to inform selection of new point.')
 
     # extract correction layers
     # Remove dict entries not relevant to correction layers
@@ -828,6 +847,7 @@ def main(iargs=None):
         cor_files=cor_files,
         metadata=meta,
         water_mask_file=inps.water_mask_file,
+        ref_lalo=inps.ref_lalo,
         # baseline_dir=inps.baseline_dir,
     )
 
@@ -856,6 +876,7 @@ def main(iargs=None):
 
 
     # if not specified, chose automatic reference point from coherence file
+    print('all_outputs', all_outputs)
     for og_ts in all_outputs:
         if inps.ref_lalo is not None:
             ref_lat, ref_lon = inps.ref_lalo.split()
@@ -865,10 +886,10 @@ def main(iargs=None):
                 inps.min_coherence, '--method', 'maxCoherence']
         # add argument for mask
         iargs.extend(['--mask', msk_file])
-        # attempt to rereference TS, will fail if fields are empty
+        # rereference rasters, will fail if fields are empty
         try:
             reference_point.main(iargs)
-        except:
+        except ValueError:
             pass
 
     # mask TS file, since reference_point adds offset back in masked field
