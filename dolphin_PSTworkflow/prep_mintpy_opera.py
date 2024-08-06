@@ -13,6 +13,7 @@ import itertools
 import os
 import sys
 from pathlib import Path
+from tqdm import tqdm
 
 # Related third-party imports
 import affine
@@ -562,7 +563,39 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     writefile.write(dsDict, outfile, metadata=meta)
     return outfile
 
+def chunked_nanmean(file_list, mask, chunk_size=50):
+    ''' averaging mean over chunks for handling memory efficiently '''
+    dat = load_gdal(file_list[0], masked=True) * mask
+    row, col = dat.shape  
+   
+    total_sum = np.zeros((row,col))
+    total_count = np.zeros((row,col))  
 
+    # process files in chunks
+    for i in tqdm(range(0, len(file_list), chunk_size)):
+        chunk_files = file_list[i:i+chunk_size]
+        chunk_data = []
+
+        # read data from each file in the chunk
+        for file in chunk_files:
+            chunk_data.append(load_gdal(file, masked=True) * mask)
+
+        # stack the chunk data
+        chunk = np.stack(chunk_data)
+      
+        # calculate sum and count for the chunk 
+        chunk_sum = np.nansum(chunk, axis=0)
+        chunk_count = np.sum(~np.isnan(chunk), axis=0)  
+
+        # update total sum and count
+        total_sum += chunk_sum
+        total_count += chunk_count
+
+    # calculate the mean
+    result = total_sum / total_count
+
+    return result
+         
 def prepare_average_stack(outfile, infiles, water_mask, file_type, metadata):
     """Average and export specified layers"""
     print("-" * 50)
@@ -573,11 +606,8 @@ def prepare_average_stack(outfile, infiles, water_mask, file_type, metadata):
     meta["FILE_TYPE"] = file_type # "mask" "temporalCoherence"
     meta["UNIT"] = "1"
 
-    # read data using gdal
-    data = []
-    for infile in infiles:
-        data.append(load_gdal(infile, masked=True) * water_mask)
-    data = np.nanmean(data, axis=0)
+    # calculating nanmean in chunks
+    data = chunked_nanmean(infiles, water_mask)
 
     # write to HDF5 file
     writefile.write(data, outfile, metadata=meta)
