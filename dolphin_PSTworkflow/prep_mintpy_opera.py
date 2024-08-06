@@ -564,7 +564,7 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     return outfile
 
 def chunked_nanmean(file_list, mask, chunk_size=50):
-    ''' averaging mean over chunks for handling memory efficiently '''
+    ''' averaging over chunks for handling memory efficiently '''
     dat = load_gdal(file_list[0], masked=True) * mask
     row, col = dat.shape  
    
