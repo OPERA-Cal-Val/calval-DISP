@@ -30,6 +30,7 @@ sys.path.append(str(Path(__file__).parent / 'src'))
 # Local application/library specific imports
 from mintpy.cli import temporal_average, reference_point, mask, \
     generate_mask, timeseries2velocity
+from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils import utils as ut
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
@@ -138,6 +139,7 @@ def _create_parser():
     )
     parser.add_argument(
         "--single-reference",
+        dest="single_reference",
         action="store_true",
         help=(
             "Indicate that all the unwrapped ifgs are single reference, which allows"
@@ -177,6 +179,12 @@ def _create_parser():
         default='0.4',
         help="Specify minimum coherence of reference pixel "
              "for max-coherence method.",
+    )
+    parser.add_argument(
+        "--zero-mask",
+        dest="zero_mask",
+        action="store_true",
+        help="Mask all pixels with zero value in unw phase",
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -411,6 +419,7 @@ def prepare_timeseries(
     unw_files,
     metadata,
     water_mask_file=None,
+    ref_lalo=None,
     baseline_dir=None,
 ):
     """Prepare the timeseries file."""
@@ -450,7 +459,7 @@ def prepare_timeseries(
     }
 
     # read water mask
-    if water_mask_file:
+    if water_mask_file is not None:
          water_mask = readfile.read(water_mask_file,
              datasetName='waterMask')[0]
     else:
@@ -460,6 +469,32 @@ def prepare_timeseries(
     meta["FILE_TYPE"] = "timeseries"
     meta["UNIT"] = "m"
     # meta["REF_DATE"] = ref_date # might not be the first date!
+    ##################################################
+    # pass reference point
+    # if not specified, chose reference point from max value in coherence file
+    coord = ut.coordinate(meta)
+    if ref_lalo is not None:
+        ref_lat, ref_lon = ref_lalo.split()
+        # get value at coordinate
+        (ref_y,
+         ref_x) = coord.geo2radar(np.array(float(ref_lat)),
+                                  np.array(float(ref_lon)))[0:2]
+    else:
+        coh_file = os.path.join(os.path.dirname(outfile), 'avgSpatialCoh.h5')
+        coh = readfile.read(coh_file)[0]
+        if water_mask.dtype.name == 'bool':
+            coh[water_mask == False] = 0.0
+        else:
+            coh[water_mask == 0] = 0.0
+        ref_y, ref_x = np.unravel_index(np.argmax(coh), coh.shape)
+        del coh
+
+    # update metadata to reflect reference point
+    ref_meta = reference_point_attribute(meta, y=ref_y, x=ref_x)
+    meta['REF_LAT'] = ref_meta['REF_LAT']
+    meta['REF_LON'] = ref_meta['REF_LON']
+    meta['REF_Y'] = ref_meta['REF_Y']
+    meta['REF_X'] = ref_meta['REF_X']
 
     # initiate HDF5 file
     writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
@@ -470,9 +505,12 @@ def prepare_timeseries(
         prog_bar = ptime.progressBar(maxValue=num_file)
         for i, unw_file in enumerate(unw_files):
             # read data using gdal
-            data = load_gdal(unw_file) * water_mask
+            data = load_gdal(unw_file)
+            # apply reference point
+            data -= np.nan_to_num(data[ref_y, ref_x])
             # convert nans to 0 to avoid errors with MintPy velocity fitting
-            data = np.nan_to_num(data)
+            # also apply water mask
+            data = np.nan_to_num(data) * water_mask
             f["timeseries"][i + 1] = data * phase2range
             prog_bar.update(i + 1, suffix=date12_list[i])
         prog_bar.close()
@@ -503,9 +541,11 @@ def prepare_timeseries(
             prog_bar = ptime.progressBar(maxValue=num_file)
             for i,corr_file in enumerate(corr_files):
                 # read data using gdal
-                data = load_gdal(corr_file, masked=True) * water_mask
-
-                f["timeseries"][i + 1] = data * phase2range
+                data = load_gdal(corr_file, masked=True)
+                # apply reference point
+                data -= np.nan_to_num(data[ref_y, ref_x])
+                # also apply water mask
+                f["timeseries"][i + 1] = data * phase2range * water_mask
                 prog_bar.update(i + 1, suffix=date12_list[i])
             prog_bar.close()
 
@@ -683,7 +723,7 @@ def prepare_stack(
     }
 
     # read water mask
-    if water_mask_file:
+    if water_mask_file is not None:
          water_mask = readfile.read(water_mask_file,
              datasetName='waterMask')[0]
     else:
@@ -717,27 +757,29 @@ def prepare_stack(
 
     print("finished writing to HDF5 file: {}".format(outfile))
 
-    # generate mask file from unw phase field
-    msk_file = os.path.join(os.path.dirname(outfile), 'combined_msk.h5')
-    iargs = [outfile, 'unwrapPhase', '-o', msk_file, '--nonzero']
-    generate_mask.main(iargs)
-    # determine whether the defined reference point is valid
-    if ref_lalo is not None:
-        ref_lat, ref_lon = ref_lalo.split()
-        # get value at coordinate
-        atr = readfile.read_attribute(msk_file)
-        coord = ut.coordinate(atr)
-        (ref_y,
-         ref_x) = coord.geo2radar(np.array(float(ref_lat)),
-                                  np.array(float(ref_lon)))[0:2]
-        with h5py.File(msk_file, 'r') as f:
-            ds = f[atr['FILE_TYPE']]
-            val_at_refpoint = ds[ref_y, ref_x]
-        # exit if reference point is in masked area
-        if val_at_refpoint == False:
-            raise Exception(f'Specified input --ref-lalo {ref_lalo} '
-                            'not in masked region. Inspect output file'
-                            f'{msk_file} to inform selection of new point.')
+    # generate average spatial coherence
+    coh_dir = os.path.dirname(os.path.dirname(outfile))
+    coh_file = os.path.join(coh_dir, 'avgSpatialCoh.h5')
+    iargs = [outfile, '--dataset', 'coherence', '-o', coh_file, '--update']
+    temporal_average.main(iargs)
+
+    if water_mask_file is not None:
+        # determine whether the defined reference point is valid
+        if ref_lalo is not None:
+            ref_lat, ref_lon = ref_lalo.split()
+            # get value at coordinate
+            atr = readfile.read_attribute(coh_file)
+            coord = ut.coordinate(atr)
+            (ref_y,
+             ref_x) = coord.geo2radar(np.array(float(ref_lat)),
+                                      np.array(float(ref_lon)))[0:2]
+            val_at_refpoint = water_mask[ref_y, ref_x]
+            print('val_at_refpoint', val_at_refpoint)
+            # exit if reference point is in masked area
+            if val_at_refpoint == False or val_at_refpoint ==  0:
+                raise Exception(f'Specified input --ref-lalo {ref_lalo} '
+                                'not in masked region. Inspect output file'
+                                f'{msk_file} to inform selection of new point.')
 
     # extract correction layers
     # Remove dict entries not relevant to correction layers
@@ -761,7 +803,7 @@ def prepare_stack(
     prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
                           'temporalCoherence', meta)
 
-    return msk_file
+    return
 
 
 def main(iargs=None):
@@ -792,13 +834,6 @@ def main(iargs=None):
             inps.water_mask_file = create_external_files(inps.water_mask_file,
                unw_files[0], out_bounds, crs, inps.out_dir,
                maskfile=True)
-    # check if mask file already generated through dolphin
-    else:
-        msk_file = geometry_dir.glob('*_mask.tif')
-        msk_file = [i for i in msk_file]
-        if len(msk_file) > 0:
-            inps.water_mask_file = msk_file[0]
-            print(f"Found water mask file {inps.water_mask_file}")
 
     # create DEM, if not specified
     if inps.dem_file is not None:
@@ -871,7 +906,7 @@ def main(iargs=None):
 
     # prepare ifgstack, which contains UNW phase + conn comp + coherence
     stack_file = os.path.join(inps.out_dir, "inputs/ifgramStack.h5")
-    msk_file = prepare_stack(
+    prepare_stack(
         outfile=stack_file,
         unw_files=unw_files,
         cor_files=cor_files,
@@ -892,49 +927,34 @@ def main(iargs=None):
             unw_files=unw_files,
             metadata=meta,
             water_mask_file=inps.water_mask_file,
-            #!#processor=processor,
+            ref_lalo=inps.ref_lalo,
             # baseline_dir=inps.baseline_dir,
         )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
                             water_mask_file=inps.water_mask_file)
 
-    # generate average spatial coherence
-    coh_file = os.path.join(inps.out_dir, "avgSpatialCoh.h5")
-    iargs = [stack_file, '--dataset', 'coherence', '-o', coh_file, '--update']
-    temporal_average.main(iargs)
-
-
-    # if not specified, chose automatic reference point from coherence file
-    print('all_outputs', all_outputs)
-    for og_ts in all_outputs:
-        if inps.ref_lalo is not None:
-            ref_lat, ref_lon = inps.ref_lalo.split()
-            iargs = [og_ts, '-l', ref_lat, '-L', ref_lon]
-        else:
-            iargs = [og_ts, '-c', coh_file, '--min-coherence',
-                inps.min_coherence, '--method', 'maxCoherence']
-        # add argument for mask
-        iargs.extend(['--mask', msk_file])
-        # rereference rasters, will fail if fields are empty
-        try:
-            reference_point.main(iargs)
-        except ValueError:
-            pass
-
-    # mask TS file, since reference_point adds offset back in masked field
-    iargs = [og_ts_file, '--mask', msk_file]
-    mask.main(iargs)
-    # capture masked TS file
-    ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
-
     # generate velocity fit
     vel_file = os.path.join(inps.out_dir, "velocity.h5")
     iargs = [og_ts_file, '-o', vel_file]
     timeseries2velocity.main(iargs)
-    # mask velocity file
-    iargs = [vel_file, '--mask', msk_file]
-    mask.main(iargs)
+
+    # generate mask file from unw phase field
+    if inps.zero_mask is True:
+        msk_file = os.path.join(os.path.dirname(og_ts_file),
+            'combined_msk.h5')
+        iargs = [stack_file, 'unwrapPhase', '-o', msk_file, '--nonzero']
+        generate_mask.main(iargs)
+
+        # mask TS file, since reference_point adds offset back in masked field
+        iargs = [og_ts_file, '--mask', msk_file]
+        mask.main(iargs)
+        # capture masked TS file
+        ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
+
+        # mask velocity file
+        iargs = [vel_file, '--mask', msk_file]
+        mask.main(iargs)
 
     print("Done.")
     return
