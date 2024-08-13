@@ -28,8 +28,8 @@ from rasterio.warp import reproject, Resampling
 sys.path.append(str(Path(__file__).parent / 'src'))
 
 # Local application/library specific imports
-from mintpy.cli import temporal_average, reference_point, mask, \
-    generate_mask, timeseries2velocity
+from mintpy.cli import temporal_average, mask, generate_mask, \
+    timeseries2velocity
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils import utils as ut
