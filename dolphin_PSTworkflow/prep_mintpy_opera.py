@@ -774,7 +774,6 @@ def prepare_stack(
              ref_x) = coord.geo2radar(np.array(float(ref_lat)),
                                       np.array(float(ref_lon)))[0:2]
             val_at_refpoint = water_mask[ref_y, ref_x]
-            print('val_at_refpoint', val_at_refpoint)
             # exit if reference point is in masked area
             if val_at_refpoint == False or val_at_refpoint ==  0:
                 raise Exception(f'Specified input --ref-lalo {ref_lalo} '
