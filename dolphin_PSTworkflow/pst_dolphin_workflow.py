@@ -3,7 +3,6 @@
 
 # Standard library imports
 import argparse
-import ast
 import datetime
 import subprocess
 import sys
@@ -11,6 +10,7 @@ import time
 from pathlib import Path
 
 # Related third-party imports
+import asf_search as asf
 import boto3
 import fsspec
 import geopandas as gpd
@@ -19,6 +19,11 @@ from botocore import UNSIGNED
 from botocore.config import Config
 from shapely.geometry import box
 from tqdm import tqdm
+
+import requests
+from io import BytesIO
+import zipfile
+import json
 
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).parent / 'src'))
@@ -54,6 +59,8 @@ def create_parser():
                              'treated as a range.')
     parser.add_argument('-fi', '--frameid', dest='frame_id', type=int,
                         default=None, help='Specify OPERA frame ID')
+    parser.add_argument('-ti', '--trackid', dest='track_id', type=int,
+                        default=None, help='Specify Sentinel track ID')
     parser.add_argument('-op', '--orbitpass', dest='orbit_pass', type=str,
                         default=None,
                         help='Specify orbit pass direction. Either: '
@@ -135,54 +142,34 @@ def filter_consistent_dates(df):
         Filter out bursts with less than 3 dates
     """
     # check if each burst has at least 3 dates
-    list_of_bursts = list(set(df['burst_id'].to_list()))
+    list_of_bursts = list(set(df['operaBurstID'].to_list()))
     reject_bursts = []
     for i in list_of_bursts:
-        all_dates = df['date'][df['burst_id'] == i].to_list()
+        all_dates = df['date'][df['operaBurstID'] == i].to_list()
         if len(all_dates) < 3:
             reject_bursts.append(i)
-    df = df[~df['burst_id'].isin(reject_bursts)]
+    df = df[~df['operaBurstID'].isin(reject_bursts)]
 
     # check if dates are common to all bursts
     list_of_dates = list(set(df['date'].to_list()))
-    list_of_bursts = list(set(df['burst_id'].to_list()))
+    list_of_bursts = list(set(df['operaBurstID'].to_list()))
     reject_dates = []
     for i in list_of_dates:
-        valid_burstlist = df['burst_id'][df['date'] == i].to_list()
+        valid_burstlist = df['operaBurstID'][df['date'] == i].to_list()
         if len(valid_burstlist) != len(list_of_bursts):
             reject_dates.append(i)
     df = df[~df['date'].isin(reject_dates)]
 
     # one more time check if each burst has at least 2 dates
-    list_of_bursts = list(set(df['burst_id'].to_list()))
+    list_of_bursts = list(set(df['operaBurstID'].to_list()))
     reject_bursts = []
     for i in list_of_bursts:
-        all_dates = df['date'][df['burst_id'] == i].to_list()
+        all_dates = df['date'][df['operaBurstID'] == i].to_list()
         if len(all_dates) < 2:
             reject_bursts.append(i)
-    df = df[~df['burst_id'].isin(reject_bursts)]
+    df = df[~df['operaBurstID'].isin(reject_bursts)]
 
     return df
-
-
-def download_whole_file(url, local_filename, verbose=False):
-    """
-        Download specified PST CSLCs
-    """
-    print("Bulk download of whole file:")
-    t0 = time.time()
-    # set s3 inputs
-    s3_bucket_name = url.split("/")[2]
-    s3_path = url.split(s3_bucket_name + '/')[-1]
-    # only proceed if corresponding local file does not exist
-    if not local_filename.exists():
-        s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
-        # download file
-        s3.download_file(s3_bucket_name, s3_path, local_filename)
-        if verbose:
-            print(f"Took {time.time() - t0:.3f} seconds for bulk download")
-
-    return
 
 
 def create_inpt_txtfile(output_path, target_prefix, output_txtfile):
@@ -202,6 +189,28 @@ def create_inpt_txtfile(output_path, target_prefix, output_txtfile):
     return
 
 
+def map_bursts_to_frameids(repo_url, repo_zip, json_file):
+    """
+        Access json matching bursts to frame IDs
+    """
+    # URL of the ZIP file containing the JSON file
+    repo_zip_url = repo_url + repo_zip
+
+    # Download the ZIP file
+    response = requests.get(repo_zip_url)
+    zip_data = BytesIO(response.content)
+
+    # Extract the JSON file from the ZIP archive
+    with zipfile.ZipFile(zip_data, 'r') as zip_ref:
+        # Assuming your JSON file is named 'data.json' within the ZIP
+        json_data = zip_ref.read(json_file)
+
+    # Load the JSON data
+    burst_to_frame_json = json.loads(json_data.decode('utf-8'))['data']
+
+    return burst_to_frame_json
+
+
 def access_cslcs(inps=None):
     """
         Custom Dolphin workflow to access and leverage PST CSLCs
@@ -215,6 +224,7 @@ def access_cslcs(inps=None):
     end_date = inps.end_date
     fixed_or_range = inps.fixed_or_range
     frameid_number = inps.frame_id
+    trackid_number = inps.track_id
     orbit_pass = inps.orbit_pass
     area_of_interest = inps.area_of_interest
     strides = inps.strides.split()
@@ -228,9 +238,9 @@ def access_cslcs(inps=None):
     correlation_threshold = inps.correlation_threshold
     if orbit_pass:
         if orbit_pass[:3].lower() == 'asc':
-            orbit_pass = 'Ascending'
+            orbit_pass = 'ASCENDING'
         if orbit_pass[:3].lower() == 'des':
-            orbit_pass = 'Descending'
+            orbit_pass = 'DESCENDING'
 
     # initialize frameid and/or area of interest
     if not frameid_number and not area_of_interest:
@@ -262,47 +272,56 @@ def access_cslcs(inps=None):
         if not i.exists():
             i.mkdir(parents=True, exist_ok=True)
 
+    # Initiate dictionary to query for CSLCs
+    asf_search_kwargs = {
+        'dataset': 'OPERA-S1', 'processingLevel': 'CSLC',
+        'intersectsWith': area_of_interest.wkt, 'flightDirection': orbit_pass}
+
     # convert the string to a datetime object
     date_format = "%Y%m%d"
-    if start_date and end_date:
+    if start_date is not None:
         start_datetime = datetime.datetime.strptime(start_date, date_format)
+        asf_search_kwargs['start'] = start_datetime
+    if end_date is not None:
         end_datetime = datetime.datetime.strptime(end_date, date_format)
+        end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
+        asf_search_kwargs['end'] = end_datetime
 
-    #
-    # Open and setup dataframe
-    s3f = fsspec.open(csv_path, anon=True, default_fill_cache=False)
-    df = pd.read_csv(s3f.open())
-    # parse geometry
-    df = gpd.GeoDataFrame(
-        df.loc[:, [c for c in df.columns if c != 'geometry']],
-        geometry=gpd.GeoSeries.from_wkt(df['geometry'])
-        )
+    # pass track id
+    if trackid_number is not None:
+        asf_search_kwargs['relativeOrbit'] = trackid_number
+
+    # pass frame id
+    if frameid_number is not None:
+        asf_search_kwargs['asfFrame'] = frameid_number
+
+    ## Return asf results to a dataframe
+    results = asf.search(**asf_search_kwargs)
+    print(f"Length of Results: {len(results)}")
+    df = gpd.GeoDataFrame.from_features(results.geojson())
+
     # parse datetime
-    df['date_datetime'] = pd.to_datetime(df['date'], format=date_format)
-    # read frame IDs as list
-    df['frame_ids'] = df['frame_ids'].apply(lambda x: ast.literal_eval(x))
-
-    #
-    # Apply filters to dataframe
-    # filter by geometry
-    if area_of_interest:
-        df = df[df['geometry'].apply(lambda x:
-                area_of_interest.intersects(x))]
-
-    # filter by orbit direction
-    if orbit_pass:
-        df = df[df['orbit_pass_direction'].apply(lambda x: orbit_pass == x)]
+    df['date'] = pd.to_datetime(df['startTime'],
+        format='%Y-%m-%dT%H:%M:%SZ').dt.strftime(date_format)
 
     # If specified, only capture input dates which match input
     # as opposed to treating them as a range
-    if start_date and end_date:
+    if start_date is not None and end_date is not None:
         if fixed_or_range:
             # Filter dataframe by specified date range
-            df = df[(df['date_datetime'] == start_datetime)
-                    | (df['date_datetime'] == end_datetime)]
-        else:
-            df = df[(df['date_datetime'] >= start_datetime)
-                    & (df['date_datetime'] <= end_datetime)]
+            df = df[(df['date'] == start_date)
+                    | (df['date'] == end_date)]
+
+    # Get map of burst ID to frame ID
+    repo_url = 'https://github.com/opera-adt/burst_db/releases/download/' + \
+        'v0.3.1/'
+    repo_zip = 'opera-s1-disp-burst-to-frame-0.3.1.json.zip'
+    json_file = 'opera-s1-disp-burst-to-frame.json'
+    burst_to_frame_json = map_bursts_to_frameids(repo_url, repo_zip,
+        json_file)
+    # get frame IDs
+    df['frame_ids'] = df['operaBurstID'].str.lower().map(burst_to_frame_json)
+    df['frame_ids'] = df['frame_ids'].apply(lambda x: x['frame_ids'])
 
     # determine and pass most common path if AOI specified, but no frame ID
     if area_of_interest and not frameid_number:
@@ -320,9 +339,8 @@ def access_cslcs(inps=None):
               'filtered by this value.')
 
     # filter by track
-    if frameid_number:
+    if frameid_number is not None:
         df = df[df['frame_ids'].apply(lambda x: frameid_number in x)]
-
 
     # filter by only dates common to each burst
     # and remove bursts with less than 3 dates
@@ -331,10 +349,18 @@ def access_cslcs(inps=None):
     # Reset the index of the filtered DataFrame
     df = df.reset_index(drop=True)
 
+    # download static layer just for the first dates
+    list_of_bursts = list(set(df['operaBurstID'].to_list()))
+    # search and download CLSC Static Layer files
+    results_static = asf.search(
+        operaBurstID=list_of_bursts,
+        processingLevel='CSLC-STATIC')
+    results_static.download(path=static_dir, processes=5)
+
     #
     # Produce burstwise IFGs over filtered subset
     # run dolphin by burst
-    list_of_bursts = list(set(df['burst_id'].to_list()))
+    list_of_bursts = list(set(df['operaBurstID'].to_list()))
     for burst in tqdm(list_of_bursts, desc="Processing burst:"):
         print(f"{burst}")
         # set output path for burst
@@ -342,7 +368,7 @@ def access_cslcs(inps=None):
         if not dolphin_dir_burst.exists():
             dolphin_dir_burst.mkdir(parents=True, exist_ok=True)
         # filter by burst
-        filtered_df = df[df['burst_id'] == burst]
+        filtered_df = df[df['operaBurstID'] == burst]
         filtered_df = filtered_df.reset_index(drop=True)
         cslc_txt = out_dir.joinpath(f'CSLC_list_{burst}.txt')
         static_txt = out_dir.joinpath(f'static_list_{burst}.txt')
@@ -350,20 +376,15 @@ def access_cslcs(inps=None):
                                desc="Downloading scene"):
             print(f"{row['date']}")
             # download CSLC
-            url = row['cslc_url']
+            url = row['url']
             local_filename = url.split("/")[-1]
             local_filename = cslc_dir.joinpath(local_filename)
-            download_whole_file(url, local_filename)
+            asf.download_url(url=url, path=cslc_dir)
             # record downloads in respective text-files
             target_prefix = 'OPERA_L2_CSLC-S1_T'
             create_inpt_txtfile(cslc_dir, target_prefix, cslc_txt)
+            # capture static CSLCs
             if index == 0:
-                # download static layer just for the first date
-                url = row['cslc_static_url']
-                local_filename = url.split("/")[-1]
-                local_filename = static_dir.joinpath(local_filename)
-                download_whole_file(url, local_filename)
-                # record downloads in respective text-files
                 target_prefix = 'OPERA_L2_CSLC-S1-STATIC_T'
                 create_inpt_txtfile(static_dir, target_prefix, static_txt)
 
@@ -379,7 +400,8 @@ def access_cslcs(inps=None):
                               enable_gpu=True,
                               no_unwrap=True,
                               no_inversion=True,
-                              zero_where_masked=True)
+                              zero_where_masked=True,
+                              output_bounds=None)
         # run dolphin
         drun.run(str(yml_file))
         # delete CSLCs to save space
