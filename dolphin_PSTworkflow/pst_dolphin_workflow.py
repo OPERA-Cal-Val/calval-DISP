@@ -426,6 +426,8 @@ def access_cslcs(inps=None):
     ifg_paths = list(dolphin_dir.glob('t*/interferograms/*.vrt'))
     coh_paths = list(dolphin_dir.glob('t*/linked_phase/' +
                      'temporal_coherence_average_*.tif'))
+    shp_count_file_list = list(dolphin_dir.glob('t*/interferograms/' +
+                               'shp_counts.tif'))
     # only access looked file if applicable
     if strides == ['1', '1']:
         ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels.tif'))
@@ -439,14 +441,16 @@ def access_cslcs(inps=None):
     (
         stitched_ifg_paths,
         stitched_cor_paths,
-        _,
-        _,
+        stitched_temp_coh_file,
+        stitched_ps_file,
         stitched_amp_dispersion_file,
+        stitched_shp_count_file,
     ) = stitching_bursts.run(
         ifg_file_list=ifg_paths,
         temp_coh_file_list=coh_paths,
         ps_file_list=ps_file_list,
         amp_dispersion_list=amp_dispersion_list,
+        shp_count_file_list=shp_count_file_list,
         stitched_ifg_dir=stitched_ifg_path,
         output_options=cfg_obj.output_options,
         file_date_fmt='%Y%m%d',
@@ -500,7 +504,9 @@ def access_cslcs(inps=None):
         cor_file_list=stitched_cor_paths,
         nlooks=nlooks,
         unwrap_options=unwrap_options,
+        temporal_coherence_file=stitched_temp_coh_file,
         mask_file=water_mask_file,
+        add_overviews=True
     )
     #
     # go through final time-series stage
@@ -509,7 +515,7 @@ def access_cslcs(inps=None):
         conncomp_paths=conncomp_paths,
         corr_paths=stitched_cor_paths,
         condition_file=stitched_amp_dispersion_file,
-        condition=CallFunc.MIN,
+        condition=CallFunc.MAX,
         output_dir=stitched_ifg_path / 'timeseries',
         run_velocity=True,
         correlation_threshold=correlation_threshold,
