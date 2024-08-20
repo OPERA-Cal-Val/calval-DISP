@@ -423,20 +423,20 @@ def access_cslcs(inps=None):
     #
     # Stitch all ifgs by burst
     # set static paths for dolphin
-    ifg_paths = list(dolphin_dir.glob('t*/interferograms/*.vrt'))
-    coh_paths = list(dolphin_dir.glob('t*/linked_phase/' +
+    ifg_paths = list(dolphin_dir.glob('T*/interferograms/*.vrt'))
+    coh_paths = list(dolphin_dir.glob('T*/linked_phase/' +
                      'temporal_coherence_average_*.tif'))
-    shp_count_file_list = list(dolphin_dir.glob('t*/interferograms/' +
+    shp_count_file_list = list(dolphin_dir.glob('T*/interferograms/' +
                                'shp_counts.tif'))
     # only access looked file if applicable
     if strides == ['1', '1']:
-        ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels.tif'))
+        ps_file_list = list(dolphin_dir.glob('T*/PS/ps_pixels.tif'))
         amp_dispersion_list = \
-            list(dolphin_dir.glob('t*/PS/amp_dispersion.tif'))
+            list(dolphin_dir.glob('T*/PS/amp_dispersion.tif'))
     else:
-        ps_file_list = list(dolphin_dir.glob('t*/PS/ps_pixels_looked.tif'))
+        ps_file_list = list(dolphin_dir.glob('T*/PS/ps_pixels_looked.tif'))
         amp_dispersion_list = \
-            list(dolphin_dir.glob('t*/PS/amp_dispersion_looked.tif'))
+            list(dolphin_dir.glob('T*/PS/amp_dispersion_looked.tif'))
     cfg_obj = config.DisplacementWorkflow.from_yaml(yml_file)
     (
         stitched_ifg_paths,
