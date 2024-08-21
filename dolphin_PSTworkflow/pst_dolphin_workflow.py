@@ -494,11 +494,14 @@ def access_cslcs(inps=None):
     # set unw options
     unwrap_options = cfg_obj.unwrap_options
     unwrap_options._directory = stitched_ifg_path
-    unwrap_options.ntiles = ntiles
     unwrap_options.n_parallel_jobs = n_parallel_jobs
     unwrap_options.n_parallel_tiles = n_parallel_tiles
     unwrap_options.unwrap_method = unwrap_method
     unwrap_options.zero_where_masked = True
+    if unwrap_method == 'snaphu':
+        unwrap_options.snaphu_options.ntiles = ntiles
+    if unwrap_method == 'icu' or unwrap_method == 'phass':
+        unwrap_options.tophu_options.ntiles = ntiles
     unwrapped_paths, conncomp_paths = unwrapping.run(
         ifg_file_list=stitched_ifg_paths,
         cor_file_list=stitched_cor_paths,
