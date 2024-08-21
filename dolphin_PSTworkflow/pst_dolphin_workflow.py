@@ -34,6 +34,7 @@ from dolphin.utils import prepare_geometry
 from dolphin.workflows import _cli_config as dconfig
 from dolphin.workflows import _cli_run as drun
 from dolphin.workflows import CallFunc, config, stitching_bursts, unwrapping
+from dolphin.workflows import UnwrapMethod
 from dolphin.workflows.displacement import timeseries
 from dem_stitcher.stitcher import stitch_dem
 from pst_dolphin_utils import create_external_files
