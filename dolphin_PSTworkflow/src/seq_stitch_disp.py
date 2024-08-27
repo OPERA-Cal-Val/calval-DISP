@@ -120,13 +120,16 @@ def stitch_unwrapped_frames(input_unw_files: List[str],
         # capture all lyr nodata values
         #!# Added constraint below
         range_anamolous_values = range(10,
-            int(max([frame2_conn_array.max(), frame1_conn_array.max()])))
+            int(max([frame2_conn_array.max(), frame1_conn_array.max()])) + 10)
         conncomp_nodata_values = [
             0, -1, conncomp_attr_dicts[ix1]['NODATA'],
             conncomp_attr_dicts[ix2]['NODATA']
         ]
         conncomp_nodata_values.extend(range_anamolous_values)
         conncomp_nodata_values = list(set(conncomp_nodata_values))
+        conncomp_nodata_values.sort()
+        conncomp_nodata_values = np.array(conncomp_nodata_values,
+            dtype=np.int16)
         unw_nodata_values = [
             0, unw_attr_dicts[ix1]['NODATA'],
             unw_attr_dicts[ix2]['NODATA']
@@ -161,7 +164,14 @@ def stitch_unwrapped_frames(input_unw_files: List[str],
 
     # replace nan with 0.0
     corr_unw = np.nan_to_num(corr_unw.data, nan=0.0)
-    corr_conn = np.nan_to_num(corr_conn.data, nan=-1.0)
+    # cycle through all nan values for conn comp
+    corr_conn = corr_conn.data
+    conncomp_nodata_values = np.array(conncomp_nodata_values,
+        dtype=np.float32)
+    corr_conn_mask = np.isin(corr_conn, conncomp_nodata_values)
+    corr_conn = np.ma.masked_where(corr_conn_mask,
+                                   corr_conn)
+    corr_conn = np.nan_to_num(corr_conn, nan=-1.0)
 
     return corr_unw, corr_conn, corr_dict['SNWE']
 
@@ -547,6 +557,7 @@ def product_stitch_sequential(input_unw_files: List[str],
                               output_conn: Optional[str] = './connCompMerged',
                               output_format: Optional[str] = 'ENVI',
                               bounds: Optional[tuple] = None,
+                              unw_range: Optional[list] = [0.2, 0.2],
                               clip_json: Optional[str] = None,
                               mask_file: Optional[str] = None,
                               # [meandiff, cycle2pi]
@@ -585,6 +596,8 @@ def product_stitch_sequential(input_unw_files: List[str],
         (West, South, East, North) bounds obtained in ariaExtract.py
     clip_json : str
         path to /productBoundingBox.json producted by ariaExtract.py
+    unw_range : list
+        colorbar range for unw phase display
     mask_file : str
         path to water mask file, example:
         %aria_extract_path/mask/watermask.msk.vrt
@@ -689,7 +702,6 @@ def product_stitch_sequential(input_unw_files: List[str],
             str(output.with_suffix('.vrt')), str(output), format="VRT")
 
         # Remove temp files
-        # Remove temp files
         for suffix in [None, '.vrt', '.xml', '.hdr', '.aux.xml']:
             target = (input if suffix is None else
                       input.with_suffix(suffix))
@@ -748,7 +760,8 @@ def product_stitch_sequential(input_unw_files: List[str],
     if save_fig:
         plot_GUNW_stitched(str(output_unw.with_suffix('.vrt')),
                            str(output_conn.with_suffix('.vrt')),
-                           epsg)
+                           epsg,
+                           unw_range)
 
     # Remove temp files
     if temp_unw_out.exists():
@@ -756,7 +769,8 @@ def product_stitch_sequential(input_unw_files: List[str],
 
 
 def plot_GUNW_stitched(stiched_unw_filename: str,
-                       stiched_conn_filename: str, epsg: str) -> None:
+                       stiched_conn_filename: str,
+                       epsg: str, unw_range: list) -> None:
     '''
     Plotting function for stitched outputs
     '''
@@ -786,6 +800,9 @@ def plot_GUNW_stitched(stiched_unw_filename: str,
     output_dir = pathlib.Path(stiched_unw_filename).absolute()
     output_fig = output_dir.parent / (pair_name + '.png')
     output_fig.unlink(missing_ok=True)
+    output_dir_conn = pathlib.Path(stiched_conn_filename).absolute()
+    output_fig_conn = output_dir_conn.parent / (pair_name + '.png')
+    output_fig_conn.unlink(missing_ok=True)
 
     # Load Data
     stitched_unw = ARIAtools.util.stitch.get_GUNW_array(
@@ -795,37 +812,35 @@ def plot_GUNW_stitched(stiched_unw_filename: str,
     stitched_attr = ARIAtools.util.stitch.get_GUNW_attr(
         stiched_unw_filename, proj=f'EPSG:{epsg}')
 
-    # ConnComp discrete colormap
-    bounds = np.linspace(0, 30, 31)
-    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
-
     # Mask
     stitched_unw[stitched_unw == 0.0] = np.nan
     stitched_conn[stitched_conn == -1.0] = np.nan
+
+    # ConnComp discrete colormap
+    conncomp_max = int(np.nanmax(stitched_conn))
+    bounds = np.linspace(0, conncomp_max, conncomp_max + 1)
+    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
     # Common plot options
     plot_kwargs = {
         'extent': ARIAtools.util.stitch.snwe_to_extent(stitched_attr['SNWE']),
         'interpolation': 'nearest'}
 
-    # Figure
-    fig, axs = plt.subplots(1, 3, dpi=300, sharey=True)
+    # Initiate unw phase figure
+    fig, axs = plt.subplots(1, 2, dpi=300, sharey=True)
 
     # Re-wrapped
     im1 = axs[0].imshow(
-        np.mod(stitched_unw, 4 * np.pi), cmap='jet', **plot_kwargs)
+        np.mod(stitched_unw, (4 * np.pi)), cmap='jet', **plot_kwargs)
 
     # Unwrapped
     im2 = axs[1].imshow(
-        stitched_unw * (0.0556 / (6 * np.pi)), cmap='jet', clim=[-0.2, 0.2],
+        stitched_unw * (0.0556 / (4 * np.pi)), cmap='jet', clim=unw_range,
         **plot_kwargs)
 
-    # Connected Components
-    im3 = axs[2].imshow(stitched_conn, cmap=cmap, norm=norm, **plot_kwargs)
-
     for im, ax, label, in zip(
-            [im1, im2, im3], axs,
-            ['Wrapped w/20 [rad]', 'Unwrapped [m]', 'Conn Comp [#]']):
+            [im1, im2], axs,
+            ['Wrapped w/20 [rad]', 'Unwrapped [m]']):
         # Remove axis and tick labels
         ax.axis('off')
         fig.colorbar(im, ax=ax, location='bottom', shrink=0.7, label=label)
@@ -834,5 +849,24 @@ def plot_GUNW_stitched(stiched_unw_filename: str,
     fig.suptitle(pair_name, fontsize=12)
     fig.tight_layout()
     fig.savefig(str(output_fig))
+    fig.clear()
+    plt.close(fig)
+
+    # Initiate connected component figure
+    fig, axs = plt.subplots(1, 1, dpi=300, sharey=True)
+
+    # Plot connected components
+    im1 = axs.imshow(stitched_conn, cmap=cmap, norm=norm,
+        **plot_kwargs)
+
+    # Remove axis and tick labels
+    axs.axis('off')
+    fig.colorbar(im1, ax=axs, location='bottom', shrink=0.7,
+        label='Conn Comp [#]')
+
+    # Add a supertitle
+    fig.suptitle(pair_name, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(str(output_fig_conn))
     fig.clear()
     plt.close(fig)

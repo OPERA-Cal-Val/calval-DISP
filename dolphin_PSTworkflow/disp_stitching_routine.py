@@ -24,8 +24,11 @@ from matplotlib.backends.backend_pdf import PdfPages
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).parent / 'src'))
 
-from pst_dolphin_utils import get_raster_crs
+from pst_dolphin_utils import create_external_files, get_raster_bounds, \
+    get_raster_crs
 from seq_stitch_disp import product_stitch_sequential
+from tile_mate import get_raster_from_tiles
+from tile_mate.stitcher import DATASET_SHORTNAMES
 
 def create_parser():
     """
@@ -47,6 +50,14 @@ def create_parser():
         help='Specify area of interest as: '
             '1. path to a valid shapefile, or '
             '2. S N W E coordinates, ie ISCE convention'
+    )
+    parser.add_argument(
+        "--water-mask-file",
+        dest="water_mask_file",
+        type=str,
+        default=None,
+        help="Specify either path to valid water mask, or download "
+             f"using one of the following data sources: {DATASET_SHORTNAMES}",
     )
     parser.add_argument(
         '-o', '--outdir',
@@ -71,8 +82,32 @@ def cmd_line_parse(iargs=None):
 
     return user_inp
 
+def generate_report_pdf(pngs, output_pdf):
+    """
+        Create summary PDF of output PNGs for qualitative checks
+    """
+    # Create PDF with all images concatenated
+    with PdfPages(output_pdf) as pdf:
+        for png in pngs:
+            # Read the image
+            img = mpimg.imread(png)
+            # Create a figure and disable the axis
+            fig, ax = plt.subplots()
+            ax.axis('off')
+            # Display the image
+            ax.imshow(img)
+            # Save the current figure to the PDF
+            pdf.savefig(fig)
+            # Close the figure
+            plt.close(fig)
+
+    return
+
 
 def disp_dict(filenames):
+    """
+        Setup and organize dictionary of DISP products
+    """
     # Dictionary to store lists of filenames by date pair
     date_pairs_dict = defaultdict(list)
 
@@ -117,6 +152,7 @@ def main(iargs=None):
     file_glob = inps.file_glob.split(',')
     area_of_interest = inps.area_of_interest
     output_format = inps.output_format
+    water_mask_file = inps.water_mask_file
     out_dir = inps.out_dir
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
@@ -135,10 +171,13 @@ def main(iargs=None):
             area_of_interest = [float(i) for i in area_of_interest]
 
     unw_pdf = os.path.join(out_dir, 'unw_pngs.pdf')
-    if os.path.exists(unw_pdf):
-        raise Exception(f'Final output file {unw_pdf} already exists in '
-                        f'specified output directory {out_dir}. Please ' 
-                        'specify a new output directory or delete the PDF.')
+    conn_pdf = os.path.join(out_dir, 'conn_pngs.pdf')
+    for i in [unw_pdf, conn_pdf]:
+        if os.path.exists(i):
+            raise Exception(f'Final output file {i} already exists in '
+                            f'specified output directory {out_dir}. ' 
+                            'Please specify a new output directory or '
+                            'delete the PDF.')
 
     unw_dir = os.path.join(out_dir, 'unwrappedPhase')
     if not os.path.exists(unw_dir):
@@ -154,9 +193,29 @@ def main(iargs=None):
     input_files = sorted(input_files)
     input_files = disp_dict(input_files)
 
+    # get min/max values for unw phase from first/last pairs
+    first_pair = next(iter(input_files))
+    first_phs_values = input_files[first_pair]
+    first_phs_values = \
+            [f'NETCDF:"{i}":unwrapped_phase' for i in first_phs_values]
+    first_ds = osgeo.gdal.Warp('', first_phs_values, format='MEM')
+    first_ds = first_ds.GetRasterBand(1).ReadAsArray()
+    first_min = np.nanmin(first_ds) * (0.0556 / (4 * np.pi))
+    last_pair = next(reversed(input_files))
+    last_phs_values = input_files[last_pair]
+    last_phs_values = \
+            [f'NETCDF:"{i}":unwrapped_phase' for i in last_phs_values]
+    last_ds = osgeo.gdal.Warp('', last_phs_values, format='MEM')
+    last_ds = last_ds.GetRasterBand(1).ReadAsArray()
+    last_max = np.nanmax(last_ds) * (0.0556 / (4 * np.pi))
+
+    # hardcode array resolution
+    arrres=[30., 30.]
+
     # loop through each pair
     epsg_code = []
     unw_pngs = []
+    conn_pngs = []
     for pair_name in input_files:
         # get iterative list of products
         pair_list = input_files[pair_name]
@@ -186,36 +245,50 @@ def main(iargs=None):
             else:
                 bounds = None
 
+        # create water mask, if not specified
+        if water_mask_file is not None:
+            if not Path(water_mask_file).exists():
+                # create temp reference file for downloading the water mask
+                ref_dir = os.path.join(unw_dir, 'ref_file')
+                if not os.path.exists(ref_dir):
+                    os.mkdir(ref_dir)
+                ref_file = os.path.join(ref_dir, pair_name)
+                osgeo.gdal.Warp(
+                    ref_file, phs_files, format=output_format,
+                    xRes=arrres[0], yRes=arrres[1],
+                    targetAlignedPixels=True, dstSRS=f'EPSG:{epsg_code}',
+                    outputBounds=bounds, outputType=osgeo.gdal.GDT_Float32)
+                ref_crs = get_raster_crs(ref_file)
+                ref_bounds = get_raster_bounds(ref_file)
+                # download water mask
+                water_mask_file = create_external_files(water_mask_file,
+                   ref_file, ref_bounds, ref_crs, out_dir,
+                   maskfile=True)
+                # remove temporary directory
+                #shutil.rmtree(ref_dir)
+
         # automatically set other variables
         outFilePhs = os.path.join(unw_dir, pair_name)
         outFileConnComp = os.path.join(conncomp_dir, pair_name)
 
         # stitching
         unw_pngs.append(outFilePhs + '.png')
+        conn_pngs.append(outFileConnComp + '.png')
         product_stitch_sequential(
             phs_files, conn_files,
-            arrres=[30., 30.], epsg=epsg_code,
+            arrres=arrres, epsg=epsg_code,
             output_unw=outFilePhs,
             output_conn=outFileConnComp,
             output_format=output_format,
             bounds=bounds,
+            unw_range=[first_min, last_max],
+            mask_file=water_mask_file,
             range_correction=True, save_fig=True,
             overwrite=True)
 
     # Create PDF with all images concatenated
-    with PdfPages(unw_pdf) as pdf:
-        for unw in unw_pngs:
-            # Read the image
-            img = mpimg.imread(unw)
-            # Create a figure and disable the axis
-            fig, ax = plt.subplots()
-            ax.axis('off')
-            # Display the image
-            ax.imshow(img)
-            # Save the current figure to the PDF
-            pdf.savefig(fig)
-            # Close the figure
-            plt.close(fig)
+    generate_report_pdf(unw_pngs, unw_pdf)
+    generate_report_pdf(conn_pngs, conn_pdf)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
