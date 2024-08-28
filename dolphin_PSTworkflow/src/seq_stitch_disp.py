@@ -634,7 +634,7 @@ def product_stitch_sequential(input_unw_files: List[str],
     # if v0.4 product, we need to convert from native unit m to rad
     conv_factor = 1.
     if track_version == 0.4:
-        conv_factor = ((4 * np.pi) / 0.0556)
+        conv_factor = -1 * ((4 * np.pi) / 0.0556)
 
     # create temp files
     temp_unw_out = output_unw.parent / ('temp_' + output_unw.name)
@@ -867,8 +867,8 @@ def plot_GUNW_stitched(stiched_unw_filename: str,
 
     # Unwrapped
     im2 = axs[1].imshow(
-        stitched_unw * (0.0556 / (4 * np.pi)), cmap='jet', clim=unw_range,
-        **plot_kwargs)
+        stitched_unw * -1 * (0.0556 / (4 * np.pi)), cmap='jet',
+        clim=unw_range, **plot_kwargs)
 
     for im, ax, label, in zip(
             [im1, im2], axs,

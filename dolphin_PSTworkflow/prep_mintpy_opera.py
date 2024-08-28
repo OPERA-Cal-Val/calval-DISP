@@ -430,9 +430,12 @@ def prepare_timeseries(
     # copy metadata to meta
     meta = {key: value for key, value in metadata.items()}
 
-    phase2range = float(meta["WAVELENGTH"]) / (4.0 * np.pi)
-    # v0.4 increment already in units of m
+    # pass lyr to disp conversion factor, which depends on the product version
+    if track_version == 0.3:
+        disp_lyr_name = 'unwrapped_phase'
+        phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
     if track_version == 0.4:
+        disp_lyr_name = 'displacement'
         phase2range = 1
 
     # grab date list from the filename
@@ -533,7 +536,7 @@ def prepare_timeseries(
         # get correction layers
         corr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
         corr_files = \
-            [i.replace('unwrapped_phase', f'/corrections/{lyr}') \
+            [i.replace(f'{disp_lyr_name}', f'/corrections/{lyr}') \
              for i in unw_files]
 
         # initiate file
@@ -679,10 +682,10 @@ def prepare_stack(
     num_pair = len(unw_files)
     unw_ext = full_suffix(unw_files[0])
 
-    phase2range = 1
+    conv_factor = 1
     # v0.4 increment in units of m, must be converted to phs
     if track_version == 0.4:
-        phase2range = (4.0 * np.pi) / float(metadata["WAVELENGTH"])
+        conv_factor = -1 * (4.0 * np.pi) / float(metadata["WAVELENGTH"])
 
     print(unw_files)
     print(f"number of unwrapped interferograms: {num_pair}")
@@ -753,7 +756,7 @@ def prepare_stack(
         ):
             # read/write *.unw file
             f["unwrapPhase"][i] = load_gdal(
-                unw_file, masked=True) * water_mask * phase2range
+                unw_file, masked=True) * water_mask * conv_factor
 
             # read/write *.cor file
             f["coherence"][i] = load_gdal(
@@ -841,14 +844,11 @@ def main(iargs=None):
                         'delete the PDF.')
 
     # pass unw conversion factor, which depends on the product version
-    print('track_version', track_version)
     track_version = track_version[0]
     if track_version == 0.3:
         disp_lyr_name = 'unwrapped_phase'
-        conv_factor = (0.0556 / (4 * np.pi))
     if track_version == 0.4:
         disp_lyr_name = 'displacement'
-        conv_factor = 1
 
     # append appropriate NETCDF prefixes
     cor_files = \

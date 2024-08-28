@@ -217,7 +217,7 @@ def main(iargs=None):
     track_version = track_version[0]
     if track_version == 0.3:
         disp_lyr_name = 'unwrapped_phase'
-        conv_factor = (0.0556 / (4 * np.pi))
+        conv_factor = -1 * (0.0556 / (4 * np.pi))
     if track_version == 0.4:
         disp_lyr_name = 'displacement'
         conv_factor = 1
