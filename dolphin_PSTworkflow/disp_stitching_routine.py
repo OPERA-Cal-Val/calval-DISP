@@ -8,6 +8,7 @@ import glob
 import os
 import re
 import sys
+import shutil
 from collections import defaultdict
 from os import fspath
 from pathlib import Path
@@ -191,23 +192,52 @@ def main(iargs=None):
     for i in file_glob:
         input_files.extend(glob.glob(i))
     input_files = sorted(input_files)
+
+    # track product version
+    track_version = []
+    for i in input_files:
+        fname = os.path.basename(i)
+        version_n = float(fname.split('_')[-2].split('v')[1])
+        # round to nearest tenth
+        version_n = round(version_n, 1)
+        track_version.append(version_n)
+
+    # create dictionary from input files
     input_files = disp_dict(input_files)
+
+    # exit if multiple versions are found
+    track_version = list(set(track_version))
+    if len(track_version) > 1:
+        raise Exception(f'Multiple file version increments ({track_version}) '
+                        'found in specified input. Version increments are ' 
+                        'not compatible. '
+                        'delete the PDF.')
+
+    # pass unw conversion factor, which depends on the product version
+    track_version = track_version[0]
+    if track_version == 0.3:
+        disp_lyr_name = 'unwrapped_phase'
+        conv_factor = (0.0556 / (4 * np.pi))
+    if track_version == 0.4:
+        disp_lyr_name = 'displacement'
+        conv_factor = ((4 * np.pi) / 0.0556)
 
     # get min/max values for unw phase from first/last pairs
     first_pair = next(iter(input_files))
     first_phs_values = input_files[first_pair]
     first_phs_values = \
-            [f'NETCDF:"{i}":unwrapped_phase' for i in first_phs_values]
+            [f'NETCDF:"{i}":{disp_lyr_name}' for i in first_phs_values]
     first_ds = osgeo.gdal.Warp('', first_phs_values, format='MEM')
     first_ds = first_ds.GetRasterBand(1).ReadAsArray()
-    first_min = np.nanmin(first_ds) * (0.0556 / (4 * np.pi))
+    first_min = np.nanmin(first_ds) * conv_factor
     last_pair = next(reversed(input_files))
     last_phs_values = input_files[last_pair]
     last_phs_values = \
-            [f'NETCDF:"{i}":unwrapped_phase' for i in last_phs_values]
+            [f'NETCDF:"{i}":{disp_lyr_name}' for i in last_phs_values]
     last_ds = osgeo.gdal.Warp('', last_phs_values, format='MEM')
     last_ds = last_ds.GetRasterBand(1).ReadAsArray()
-    last_max = np.nanmax(last_ds) * (0.0556 / (4 * np.pi))
+    last_max = np.nanmax(last_ds) * conv_factor
+    del first_ds, last_ds
 
     # hardcode array resolution
     arrres=[30., 30.]
@@ -220,7 +250,7 @@ def main(iargs=None):
         # get iterative list of products
         pair_list = input_files[pair_name]
         phs_files = \
-            [f'NETCDF:"{i}":unwrapped_phase' for i in pair_list]
+            [f'NETCDF:"{i}":{disp_lyr_name}' for i in pair_list]
         conn_files = \
             [f'NETCDF:"{i}":connected_component_labels' for i in pair_list]
 
@@ -242,6 +272,16 @@ def main(iargs=None):
                 east_convtd = max(pt[0] for pt in transformed_bbox)
                 north_convtd = max(pt[1] for pt in transformed_bbox)
                 bounds = [west_convtd, south_convtd, east_convtd, north_convtd]
+                # check if bounds are valid
+                test_ds = osgeo.gdal.Warp('', phs_files, format='MEM',
+                    dstSRS=f'EPSG:{epsg_code}', outputBounds=bounds)
+                test_ds = test_ds.GetRasterBand(1).ReadAsArray()
+                test_max = np.nanmax(test_ds)
+                if np.isnan(test_max):
+                    raise Exception('Specified input bounds '
+                                    f'{inps.area_of_interest} outside of '
+                                    'valid data bounds.')
+                del test_ds
             else:
                 bounds = None
 
@@ -265,7 +305,7 @@ def main(iargs=None):
                    ref_file, ref_bounds, ref_crs, out_dir,
                    maskfile=True)
                 # remove temporary directory
-                #shutil.rmtree(ref_dir)
+                shutil.rmtree(ref_dir)
 
         # automatically set other variables
         outFilePhs = os.path.join(unw_dir, pair_name)
@@ -275,7 +315,7 @@ def main(iargs=None):
         unw_pngs.append(outFilePhs + '.png')
         conn_pngs.append(outFileConnComp + '.png')
         product_stitch_sequential(
-            phs_files, conn_files,
+            phs_files, conn_files, track_version,
             arrres=arrres, epsg=epsg_code,
             output_unw=outFilePhs,
             output_conn=outFileConnComp,

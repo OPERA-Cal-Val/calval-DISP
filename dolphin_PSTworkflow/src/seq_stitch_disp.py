@@ -44,6 +44,7 @@ LOGGER = logging.getLogger(__name__)
 
 def stitch_unwrapped_frames(input_unw_files: List[str],
                             input_conncomp_files: List[str],
+                            conv_factor: float,
                             proj: Optional[str] = 'EPSG:4326',
                             correction_method: Optional[str] = 'cycle2pi',
                             range_correction: Optional[bool] = True,
@@ -99,7 +100,7 @@ def stitch_unwrapped_frames(input_unw_files: List[str],
         frame1_unw_array = ARIAtools.util.stitch.get_GUNW_array(
             filename=unw_attr_dicts[ix1]['PATH'],
             proj=proj,
-            nodata=unw_attr_dicts[ix1]['NODATA'])
+            nodata=unw_attr_dicts[ix1]['NODATA']) * conv_factor
 
         frame1_conn_array = ARIAtools.util.stitch.get_GUNW_array(
             filename=conncomp_attr_dicts[ix1]['PATH'],
@@ -110,7 +111,7 @@ def stitch_unwrapped_frames(input_unw_files: List[str],
         frame2_unw_array = ARIAtools.util.stitch.get_GUNW_array(
             filename=unw_attr_dicts[ix2]['PATH'],
             proj=proj,
-            nodata=unw_attr_dicts[ix2]['NODATA'])
+            nodata=unw_attr_dicts[ix2]['NODATA']) * conv_factor
 
         frame2_conn_array = ARIAtools.util.stitch.get_GUNW_array(
             filename=conncomp_attr_dicts[ix2]['PATH'],
@@ -551,6 +552,7 @@ def _range_correction(unw1: NDArray,
 
 def product_stitch_sequential(input_unw_files: List[str],
                               input_conncomp_files: List[str],
+                              track_version: float,
                               arrres: List[float],
                               epsg: Optional[str] = '4326',
                               output_unw: Optional[str] = './unwMerged',
@@ -585,6 +587,8 @@ def product_stitch_sequential(input_unw_files: List[str],
         (multiple frames along same track)
         ARIA GUNW:
         'NETCDF:"%path/S1-GUNW-*.nc":/science/grids/data/connectedComponents'
+    track_version : float
+        version of DISP product, which determines conversion factor to be used
     output_unw : str
         str pointing to path and filename of output stitched Unwrapped Phase
     output_conn : str
@@ -627,6 +631,11 @@ def product_stitch_sequential(input_unw_files: List[str],
     if not output_conn.parent.exists():
         output_conn.parent.mkdir(exist_ok=True)
 
+    # if v0.4 product, we need to convert from native unit m to rad
+    conv_factor = 1.
+    if track_version == 0.4:
+        conv_factor = ((4 * np.pi) / 0.0556)
+
     # create temp files
     temp_unw_out = output_unw.parent / ('temp_' + output_unw.name)
     temp_conn_out = output_conn.parent / ('temp_' + output_conn.name)
@@ -642,14 +651,35 @@ def product_stitch_sequential(input_unw_files: List[str],
     # and therefore no stitching needed
     if len(input_unw_files) == 1:
         osgeo.gdal.BuildVRT(
-            str(temp_unw_out.with_suffix('.vrt')), input_unw_files)
-        osgeo.gdal.BuildVRT(
             str(temp_conn_out.with_suffix('.vrt')), input_conncomp_files)
+        osgeo.gdal.BuildVRT(
+            str(temp_unw_out.with_suffix('.vrt')), input_unw_files)
+        # apply conversion factor if v0.4 product
+        if track_version == 0.4:
+            osgeo.gdal.BuildVRT(
+                str(temp_unw_out.with_suffix('.vrt')), input_unw_files)
+            tmp_unw = osgeo.gdal.Open(temp_unw_out.with_suffix('.vrt'))
+            # Get raster geographical information
+            transform = tmp_unw.GetGeoTransform()
+            xsize = tmp_unw.RasterXSize
+            ysize = tmp_unw.RasterYSize
+            snwe = [transform[3] + ysize * transform[5], transform[3],
+                    transform[0], transform[0] + xsize * transform[1]]
+            unw_array = tmp_unw.ReadAsArray()
+            unw_array *= conv_factor
+            unw_array = np.nan_to_num(unw_array, nan=0.0)
+            # rewrite unwrappedPhase
+            temp_unw_out.with_suffix('.vrt').unlink()
+            ARIAtools.util.stitch.write_GUNW_array(
+                temp_unw_out, unw_array, snwe,
+                format=output_format, epsg=int(ref_proj), verbose=verbose,
+                update_mode=True, add_vrt=True, nodata=0.0)
 
     else:
         (combined_unwrap, combined_conn, combined_snwe) = \
             stitch_unwrapped_frames(
                 input_unw_files, input_conncomp_files,
+                conv_factor,
                 proj=f'EPSG:{ref_proj}',
                 correction_method=correction_method,
                 range_correction=range_correction, direction_N_S=True,
@@ -818,6 +848,8 @@ def plot_GUNW_stitched(stiched_unw_filename: str,
 
     # ConnComp discrete colormap
     conncomp_max = int(np.nanmax(stitched_conn))
+    if conncomp_max > 100:
+        conncomp_max = 20
     bounds = np.linspace(0, conncomp_max, conncomp_max + 1)
     norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
