@@ -417,6 +417,7 @@ def get_azimuth_ang(dsDict):
 def prepare_timeseries(
     outfile,
     unw_files,
+    track_version,
     metadata,
     water_mask_file=None,
     ref_lalo=None,
@@ -428,7 +429,11 @@ def prepare_timeseries(
 
     # copy metadata to meta
     meta = {key: value for key, value in metadata.items()}
-    phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
+
+    phase2range = float(meta["WAVELENGTH"]) / (4.0 * np.pi)
+    # v0.4 increment already in units of m
+    if track_version == 0.4:
+        phase2range = 1
 
     # grab date list from the filename
     date12_list = _get_date_pairs(unw_files)
@@ -658,6 +663,7 @@ def prepare_stack(
     outfile,
     unw_files,
     cor_files,
+    track_version,
     metadata,
     water_mask_file=None,
     ref_lalo=None,
@@ -672,6 +678,11 @@ def prepare_stack(
     # get list of *.unw file
     num_pair = len(unw_files)
     unw_ext = full_suffix(unw_files[0])
+
+    phase2range = 1
+    # v0.4 increment in units of m, must be converted to phs
+    if track_version == 0.4:
+        phase2range = (4.0 * np.pi) / float(metadata["WAVELENGTH"])
 
     print(unw_files)
     print(f"number of unwrapped interferograms: {num_pair}")
@@ -742,7 +753,7 @@ def prepare_stack(
         ):
             # read/write *.unw file
             f["unwrapPhase"][i] = load_gdal(
-                unw_file, masked=True) * water_mask
+                unw_file, masked=True) * water_mask * phase2range
 
             # read/write *.cor file
             f["coherence"][i] = load_gdal(
@@ -811,11 +822,39 @@ def main(iargs=None):
 
     unw_files = sorted(glob.glob(inps.unw_file_glob))
     print(f"Found {len(unw_files)} unwrapped files")
+
+    # track product version
+    track_version = []
+    for i in unw_files:
+        fname = os.path.basename(i)
+        version_n = float(fname.split('_')[-2].split('v')[1])
+        # round to nearest tenth
+        version_n = round(version_n, 1)
+        track_version.append(version_n)
+
+    # exit if multiple versions are found
+    track_version = list(set(track_version))
+    if len(track_version) > 1:
+        raise Exception(f'Multiple file version increments ({track_version}) '
+                        'found in specified input. Version increments are ' 
+                        'not compatible. '
+                        'delete the PDF.')
+
+    # pass unw conversion factor, which depends on the product version
+    print('track_version', track_version)
+    track_version = track_version[0]
+    if track_version == 0.3:
+        disp_lyr_name = 'unwrapped_phase'
+        conv_factor = (0.0556 / (4 * np.pi))
+    if track_version == 0.4:
+        disp_lyr_name = 'displacement'
+        conv_factor = 1
+
     # append appropriate NETCDF prefixes
     cor_files = \
         [f'NETCDF:"{i}":interferometric_correlation' for i in unw_files]
     unw_files = \
-        [f'NETCDF:"{i}":unwrapped_phase' for i in unw_files]
+        [f'NETCDF:"{i}":{disp_lyr_name}' for i in unw_files]
     print(f"Found {len(cor_files)} correlation files")
 
     # get geolocation info
@@ -909,6 +948,7 @@ def main(iargs=None):
         outfile=stack_file,
         unw_files=unw_files,
         cor_files=cor_files,
+        track_version=track_version,
         metadata=meta,
         water_mask_file=inps.water_mask_file,
         ref_lalo=inps.ref_lalo,
@@ -924,6 +964,7 @@ def main(iargs=None):
         all_outputs = prepare_timeseries(
             outfile=og_ts_file,
             unw_files=unw_files,
+            track_version=track_version,
             metadata=meta,
             water_mask_file=inps.water_mask_file,
             ref_lalo=inps.ref_lalo,
