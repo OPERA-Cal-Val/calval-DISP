@@ -220,7 +220,7 @@ def main(iargs=None):
         conv_factor = (0.0556 / (4 * np.pi))
     if track_version == 0.4:
         disp_lyr_name = 'displacement'
-        conv_factor = ((4 * np.pi) / 0.0556)
+        conv_factor = 1
 
     # get min/max values for unw phase from first/last pairs
     first_pair = next(iter(input_files))
