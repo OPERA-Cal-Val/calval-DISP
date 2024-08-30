@@ -92,13 +92,29 @@ def _create_parser():
         "-g",
         "--geom-dir",
         default="./geometry",
-        help="Geometry directory (default: %(default)s).\n",
+        help="Geometry directory (default: %(default)s).",
     )
     parser.add_argument(
         "-m",
         "--meta-file",
         type=str,
         help="GSLC metadata file or directory",
+    )
+    parser.add_argument(
+        "-s",
+        "--start-date",
+        dest='startDate',
+        default='None',
+        help="remove/drop interferograms with date earlier than "
+             "start-date in YYMMDD or YYYYMMDD format",
+    )
+    parser.add_argument(
+        "-e",
+        "--end-date",
+        dest='endDate',
+        default='None',
+        help="remove/drop interferograms with date later than "
+             "end-date in YYMMDD or YYYYMMDD format",
     )
     parser.add_argument(
         "-b",
@@ -824,6 +840,26 @@ def main(iargs=None):
     inps = cmd_line_parse(iargs)
 
     unw_files = sorted(glob.glob(inps.unw_file_glob))
+
+    # filter input by specified dates
+    if inps.startDate is not None:
+        startDate = int(inps.startDate)
+        filtered_unw_files = []
+        for i in unw_files:
+            sec_date = int(os.path.basename(i).split('_')[7][:8])
+            if sec_date >= startDate:
+                filtered_unw_files.append(i)
+    unw_files = filtered_unw_files
+
+    if inps.endDate is not None:
+        endDate = int(inps.endDate)
+        filtered_unw_files = []
+        for i in unw_files:
+            sec_date = int(os.path.basename(i).split('_')[7][:8])
+            if sec_date <= endDate:
+                filtered_unw_files.append(i)
+    unw_files = filtered_unw_files
+    
     print(f"Found {len(unw_files)} unwrapped files")
 
     # track product version
