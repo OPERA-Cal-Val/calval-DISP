@@ -104,7 +104,7 @@ def _create_parser():
         "-s",
         "--start-date",
         dest='startDate',
-        default='None',
+        default=None,
         help="remove/drop interferograms with date earlier than "
              "start-date in YYMMDD or YYYYMMDD format",
     )
@@ -112,7 +112,7 @@ def _create_parser():
         "-e",
         "--end-date",
         dest='endDate',
-        default='None',
+        default=None,
         help="remove/drop interferograms with date later than "
              "end-date in YYMMDD or YYYYMMDD format",
     )
@@ -430,6 +430,55 @@ def get_azimuth_ang(dsDict):
     return azimuth_angle, east, north
 
 
+def save_stack(
+    fname,
+    ds_name_dict,
+    meta,
+    num_file,
+    file_list,
+    ref_y,
+    ref_x,
+    water_mask,
+    date12_list,
+    phase2range=1,
+    unw_file=False
+    ):
+    """Prepare h5 file for input stack of layers"""
+    # initiate file
+    writefile.layout_hdf5(fname, ds_name_dict, metadata=meta)
+
+    # writing data to HDF5 file
+    print("writing data to HDF5 file {} with a mode ...".format( \
+          fname))
+    with h5py.File(fname, "a") as f:
+        prog_bar = ptime.progressBar(maxValue=num_file)
+        for i,file_inc in enumerate(file_list):
+            # read data using gdal
+            # if unw file, cannot read as masked array
+            # necessary to avoid errors with MintPy
+            if unw_file is True:
+                data = load_gdal(file_inc)
+            else:
+                data = load_gdal(file_inc, masked=True)
+            # apply reference point
+            data -= np.nan_to_num(data[ref_y, ref_x])
+            # if unw file, convert nans to 0
+            # necessary to avoid errors with MintPy velocity fitting
+            if unw_file is True:
+                data = np.nan_to_num(data)
+            # also apply water mask
+            data = data * water_mask
+            # apply conversion factor and add to cube
+            f["timeseries"][i + 1] = data * phase2range
+            prog_bar.update(i + 1, suffix=date12_list[i])
+        prog_bar.close()
+
+        print("set value at the first acquisition to ZERO.")
+        f["timeseries"][0] = 0.0
+
+    print("finished writing to HDF5 file: {}".format(fname))
+
+
 def prepare_timeseries(
     outfile,
     unw_files,
@@ -520,31 +569,13 @@ def prepare_timeseries(
     meta['REF_Y'] = ref_meta['REF_Y']
     meta['REF_X'] = ref_meta['REF_X']
 
-    # initiate HDF5 file
-    writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
+    # write TS containing displacement layers to file
+    save_stack(outfile, ds_name_dict, meta, num_file, unw_files, ref_y, ref_x,
+        water_mask, date12_list, phase2range, unw_file=True)
 
-    # writing data to HDF5 file
-    print("writing data to HDF5 file {} with a mode ...".format(outfile))
-    with h5py.File(outfile, "a") as f:
-        prog_bar = ptime.progressBar(maxValue=num_file)
-        for i, unw_file in enumerate(unw_files):
-            # read data using gdal
-            data = load_gdal(unw_file)
-            # apply reference point
-            data -= np.nan_to_num(data[ref_y, ref_x])
-            # convert nans to 0 to avoid errors with MintPy velocity fitting
-            # also apply water mask
-            data = np.nan_to_num(data) * water_mask
-            f["timeseries"][i + 1] = data * phase2range
-            prog_bar.update(i + 1, suffix=date12_list[i])
-        prog_bar.close()
-
-        print("set value at the first acquisition to ZERO.")
-        f["timeseries"][0] = 0.0
-
-    print("finished writing to HDF5 file: {}".format(outfile))
-
+    # record output
     all_outputs = [outfile]
+
     # loop through and create files for each correction layer
     correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
                          'solid_earth_tide', 'plate_motion']
@@ -555,29 +586,30 @@ def prepare_timeseries(
             [i.replace(f'{disp_lyr_name}', f'/corrections/{lyr}') \
              for i in unw_files]
 
-        # initiate file
-        writefile.layout_hdf5(corr_fname, ds_name_dict, metadata=meta)
+        # write layers to file
+        save_stack(corr_fname, ds_name_dict, meta, num_file, corr_files,
+            ref_y, ref_x, water_mask, date12_list, phase2range)
 
-        # writing data to HDF5 file
-        print("writing data to HDF5 file {} with a mode ...".format( \
-              corr_fname))
-        with h5py.File(corr_fname, "a") as f:
-            prog_bar = ptime.progressBar(maxValue=num_file)
-            for i,corr_file in enumerate(corr_files):
-                # read data using gdal
-                data = load_gdal(corr_file, masked=True)
-                # apply reference point
-                data -= np.nan_to_num(data[ref_y, ref_x])
-                # also apply water mask
-                f["timeseries"][i + 1] = data * phase2range * water_mask
-                prog_bar.update(i + 1, suffix=date12_list[i])
-            prog_bar.close()
-
-            print("set value at the first acquisition to ZERO.")
-            f["timeseries"][0] = 0.0
-
-        print("finished writing to HDF5 file: {}".format(corr_fname))
+        # record outputs
         all_outputs.append(corr_fname)
+
+    # save short wavelength layers to file
+    if track_version == 0.4:
+        shortwvl_lyr = 'short_wavelength_displacement'
+        # get correction layers
+        shortwvl_fname = os.path.join(os.path.dirname(outfile),
+            f'{shortwvl_lyr}.h5')
+        shortwvl_files = \
+            [i.replace(f'{disp_lyr_name}', f'{shortwvl_lyr}') \
+             for i in unw_files]
+
+        # write layers to file
+        save_stack(shortwvl_fname, ds_name_dict, meta, num_file,
+            shortwvl_files, ref_y, ref_x, water_mask, date12_list,
+            phase2range)
+
+        # record output
+        all_outputs.append(shortwvl_fname)
 
     return all_outputs
 
@@ -849,7 +881,7 @@ def main(iargs=None):
             sec_date = int(os.path.basename(i).split('_')[7][:8])
             if sec_date >= startDate:
                 filtered_unw_files.append(i)
-    unw_files = filtered_unw_files
+        unw_files = filtered_unw_files
 
     if inps.endDate is not None:
         endDate = int(inps.endDate)
@@ -858,7 +890,7 @@ def main(iargs=None):
             sec_date = int(os.path.basename(i).split('_')[7][:8])
             if sec_date <= endDate:
                 filtered_unw_files.append(i)
-    unw_files = filtered_unw_files
+        unw_files = filtered_unw_files
     
     print(f"Found {len(unw_files)} unwrapped files")
 
