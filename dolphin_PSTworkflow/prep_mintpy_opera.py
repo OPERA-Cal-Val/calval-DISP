@@ -499,7 +499,7 @@ def prepare_timeseries(
     if track_version == 0.3:
         disp_lyr_name = 'unwrapped_phase'
         phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
-    if track_version == 0.4:
+    if track_version >= 0.4:
         disp_lyr_name = 'displacement'
         phase2range = 1
 
@@ -594,7 +594,7 @@ def prepare_timeseries(
         all_outputs.append(corr_fname)
 
     # save short wavelength layers to file
-    if track_version == 0.4:
+    if track_version >= 0.4:
         shortwvl_lyr = 'short_wavelength_displacement'
         # get correction layers
         shortwvl_fname = os.path.join(os.path.dirname(outfile),
@@ -731,8 +731,8 @@ def prepare_stack(
     unw_ext = full_suffix(unw_files[0])
 
     conv_factor = 1
-    # v0.4 increment in units of m, must be converted to phs
-    if track_version == 0.4:
+    # >=v0.4 increment in units of m, must be converted to phs
+    if track_version >= 0.4:
         conv_factor = -1 * (4.0 * np.pi) / float(metadata["WAVELENGTH"])
 
     print(unw_files)
@@ -915,7 +915,7 @@ def main(iargs=None):
     track_version = track_version[0]
     if track_version == 0.3:
         disp_lyr_name = 'unwrapped_phase'
-    if track_version == 0.4:
+    if track_version >= 0.4:
         disp_lyr_name = 'displacement'
 
     # append appropriate NETCDF prefixes
