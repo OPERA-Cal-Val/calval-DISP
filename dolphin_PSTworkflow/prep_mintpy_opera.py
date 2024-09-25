@@ -583,7 +583,7 @@ def prepare_timeseries(
         # get correction layers
         corr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
         corr_files = \
-            [i.replace(f'{disp_lyr_name}', f'/corrections/{lyr}') \
+            [i.replace(disp_lyr_name, f'/corrections/{lyr}') \
              for i in unw_files]
 
         # write layers to file
@@ -600,7 +600,7 @@ def prepare_timeseries(
         shortwvl_fname = os.path.join(os.path.dirname(outfile),
             f'{shortwvl_lyr}.h5')
         shortwvl_files = \
-            [i.replace(f'{disp_lyr_name}', f'{shortwvl_lyr}') \
+            [i.replace(disp_lyr_name, shortwvl_lyr) \
              for i in unw_files]
 
         # write layers to file
@@ -713,7 +713,7 @@ def prepare_average_stack(outfile, infiles, water_mask, file_type, metadata):
 def prepare_stack(
     outfile,
     unw_files,
-    cor_files,
+    disp_lyr_name,
     track_version,
     metadata,
     water_mask_file=None,
@@ -737,14 +737,17 @@ def prepare_stack(
 
     print(unw_files)
     print(f"number of unwrapped interferograms: {num_pair}")
-    print(f"number of correlation files: {len(cor_files)}")
-    print(cor_files)
 
-    # get list of *.unw.conncomp file
-    cc_files = \
-        [i.replace('unwrapped_phase', 'connected_component_labels') \
+    # get list of interferometric correlation layers
+    cor_files = \
+        [i.replace(disp_lyr_name, 'interferometric_correlation') \
          for i in unw_files]
+    print(f"number of correlation files: {len(cor_files)}")
 
+    # get list of conncomp layers
+    cc_files = \
+        [i.replace(disp_lyr_name, 'connected_component_labels') \
+         for i in unw_files]
     print(f"number of connected components files: {len(cc_files)}")
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
@@ -849,7 +852,7 @@ def prepare_stack(
 
     # loop through and create files for persistent scatterer
     ps_files = \
-            [i.replace('unwrapped_phase', 'persistent_scatterer_mask') \
+            [i.replace(disp_lyr_name, 'persistent_scatterer_mask') \
              for i in unw_files]
     ps_fname = os.path.join(os.path.dirname(outfile), 
         'persistent_scatterer_mask.h5')
@@ -857,7 +860,7 @@ def prepare_stack(
 
     # loop through and create files for temporal coherence
     tempcoh_files = \
-            [i.replace('unwrapped_phase', 'temporal_coherence') \
+            [i.replace(disp_lyr_name, 'temporal_coherence') \
              for i in unw_files]
     tempcoh_fname = os.path.join(os.path.dirname(outfile),
         'temporalCoherence.h5')
@@ -871,7 +874,10 @@ def main(iargs=None):
     """Run the preparation functions."""
     inps = cmd_line_parse(iargs)
 
-    unw_files = sorted(glob.glob(inps.unw_file_glob))
+    unw_files = sorted(
+        glob.glob(inps.unw_file_glob),
+        key=lambda x: x.split('_')[-3][:8]
+    )
 
     # filter input by specified dates
     if inps.startDate is not None:
@@ -919,11 +925,8 @@ def main(iargs=None):
         disp_lyr_name = 'displacement'
 
     # append appropriate NETCDF prefixes
-    cor_files = \
-        [f'NETCDF:"{i}":interferometric_correlation' for i in unw_files]
     unw_files = \
         [f'NETCDF:"{i}":{disp_lyr_name}' for i in unw_files]
-    print(f"Found {len(cor_files)} correlation files")
 
     # get geolocation info
     static_dir = Path(inps.meta_file)
@@ -1015,7 +1018,7 @@ def main(iargs=None):
     prepare_stack(
         outfile=stack_file,
         unw_files=unw_files,
-        cor_files=cor_files,
+        disp_lyr_name=disp_lyr_name,
         track_version=track_version,
         metadata=meta,
         water_mask_file=inps.water_mask_file,
