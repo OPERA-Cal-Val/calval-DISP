@@ -13,35 +13,55 @@ import itertools
 import os
 import sys
 from pathlib import Path
-from tqdm import tqdm
+from typing import Sequence
 
-# Related third-party imports
+# Third-party imports
 import affine
 import h5py
 import numpy as np
 import pyproj
 import rasterio
+from osgeo import gdal
 from rasterio import CRS
 from rasterio.warp import reproject, Resampling
+from tqdm import tqdm
 
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).parent / 'src'))
 
-# Local application/library specific imports
-from mintpy.cli import temporal_average, mask, generate_mask, \
+# Local application/library-specific imports
+from dem_stitcher.stitcher import stitch_dem
+from mintpy.cli import (
+    generate_mask,
+    mask,
+    temporal_average,
     timeseries2velocity
+)
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils import utils as ut
-from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
-from mintpy.utils.utils0 import azimuth2heading_angle
-from pst_dolphin_utils import create_external_files, get_raster_bounds, \
-    get_raster_crs, full_suffix, get_raster_xysize, get_raster_gt, \
-    load_gdal, warp_to_match
+from mintpy.utils.utils0 import (
+    azimuth2heading_angle,
+    calc_azimuth_from_east_north_obs
+)
+from opera_utils import get_dates
+from pst_dolphin_utils import (
+    BackgroundRasterWriter,
+    create_external_files,
+    datetime_to_float,
+    estimate_velocity,
+    full_suffix,
+    get_raster_bounds,
+    get_raster_crs,
+    get_raster_gt,
+    get_raster_xysize,
+    HDF5StackReader,
+    load_gdal,
+    process_blocks,
+    warp_to_match
+)
 from tile_mate import get_raster_from_tiles
 from tile_mate.stitcher import DATASET_SHORTNAMES
-from opera_utils import get_dates
-from dem_stitcher.stitcher import stitch_dem
 
 OPERA_DATASET_ROOT = './'
 
@@ -201,6 +221,18 @@ def _create_parser():
         dest="zero_mask",
         action="store_true",
         help="Mask all pixels with zero value in unw phase",
+    )
+    parser.add_argument(
+        "--corr-lyrs",
+        dest="corr_lyrs",
+        action="store_true",
+        help="Extract correction layers",
+    )
+    parser.add_argument(
+        "--shortwvl-lyrs",
+        dest="shortwvl_lyrs",
+        action="store_true",
+        help="Extract short wavelength layers",
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -436,18 +468,20 @@ def save_stack(
     meta,
     num_file,
     file_list,
-    ref_y,
-    ref_x,
     water_mask,
     date12_list,
     phase2range=1,
-    unw_file=False
+    ref_y=None,
+    ref_x=None,
+    unw_file=False,
+    mask_dict={},
     ):
     """Prepare h5 file for input stack of layers"""
     # initiate file
     writefile.layout_hdf5(fname, ds_name_dict, metadata=meta)
 
     # writing data to HDF5 file
+    reflyr_name = file_list[0].split(':')[-1]
     print("writing data to HDF5 file {} with a mode ...".format( \
           fname))
     with h5py.File(fname, "a") as f:
@@ -460,17 +494,30 @@ def save_stack(
                 data = load_gdal(file_inc)
             else:
                 data = load_gdal(file_inc, masked=True)
-            # apply reference point
-            data -= np.nan_to_num(data[ref_y, ref_x])
+
+            # apply reference point, if not None
+            if ref_y is not None and ref_x is not None:
+                data -= np.nan_to_num(data[ref_y, ref_x])
+
+            # mask by specified dict of thresholds
+            for dict_key in mask_dict.keys():
+                mask_lyr = file_inc.replace(reflyr_name, dict_key)
+                mask_thres = mask_dict[dict_key]
+                mask_data = load_gdal(mask_lyr)
+                data[mask_data == mask_thres] = np.nan
+
+            # also apply water mask
+            data = data * water_mask
+
             # if unw file, convert nans to 0
             # necessary to avoid errors with MintPy velocity fitting
             if unw_file is True:
                 data = np.nan_to_num(data)
-            # also apply water mask
-            data = data * water_mask
+
             # apply conversion factor and add to cube
             f["timeseries"][i + 1] = data * phase2range
             prog_bar.update(i + 1, suffix=date12_list[i])
+
         prog_bar.close()
 
         print("set value at the first acquisition to ZERO.")
@@ -486,7 +533,8 @@ def prepare_timeseries(
     metadata,
     water_mask_file=None,
     ref_lalo=None,
-    baseline_dir=None,
+    corr_lyrs=False,
+    shortwvl_lyrs=False,
 ):
     """Prepare the timeseries file."""
     print("-" * 50)
@@ -517,8 +565,6 @@ def prepare_timeseries(
 
     # baseline info
     pbase = np.zeros(num_date, dtype=np.float32)
-    if baseline_dir is not None:
-        raise NotImplementedError
 
     # size info
     cols, rows = get_raster_xysize(unw_files[0])
@@ -569,47 +615,68 @@ def prepare_timeseries(
     meta['REF_Y'] = ref_meta['REF_Y']
     meta['REF_X'] = ref_meta['REF_X']
 
-    # write TS containing displacement layers to file
-    save_stack(outfile, ds_name_dict, meta, num_file, unw_files, ref_y, ref_x,
-        water_mask, date12_list, phase2range, unw_file=True)
+    # loop through and create files for each correction layer and mask layer
+    all_outputs = []
+    mask_layers = ['connected_component_labels', 'temporal_coherence', \
+                   'interferometric_correlation']
 
-    # record output
-    all_outputs = [outfile]
+    correction_layers = []
+    if corr_lyrs is True:
+        correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
+                             'solid_earth_tide', 'plate_motion']
 
-    # loop through and create files for each correction layer
-    correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
-                         'solid_earth_tide', 'plate_motion']
-    for lyr in correction_layers:
-        # get correction layers
-        corr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-        corr_files = \
-            [i.replace(disp_lyr_name, f'/corrections/{lyr}') \
-             for i in unw_files]
-
-        # write layers to file
-        save_stack(corr_fname, ds_name_dict, meta, num_file, corr_files,
-            ref_y, ref_x, water_mask, date12_list, phase2range)
+    for lyr in mask_layers + correction_layers:
+        # get layer names and paths
+        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+        # if correction layer need to account for different path + conv factor
+        if lyr in correction_layers:
+            lyr_paths = \
+                [i.replace(disp_lyr_name, f'/corrections/{lyr}') \
+                 for i in unw_files]
+            # write layers to file
+            save_stack(lyr_fname, ds_name_dict, meta, num_file, lyr_paths,
+                water_mask, date12_list, phase2range, ref_y, ref_x)
+        else:
+            lyr_paths = \
+                [i.replace(disp_lyr_name, lyr) for i in unw_files]
+            # write layers to file
+            save_stack(lyr_fname, ds_name_dict, meta, num_file, lyr_paths,
+                water_mask, date12_list, 1)
 
         # record outputs
-        all_outputs.append(corr_fname)
+        all_outputs.append(lyr_fname)
+
+    # set dictionary that will be used to mask TS by specified thresholds
+    mask_dict = {}
+    mask_dict['connected_component_labels'] = 0
+    mask_dict['temporal_coherence'] = 0.5
+    mask_dict['interferometric_correlation'] = 0.3
+
+    # write TS containing displacement layers to file
+    save_stack(outfile, ds_name_dict, meta, num_file, unw_files,
+        water_mask, date12_list, phase2range, ref_y, ref_x, unw_file=True,
+        mask_dict=mask_dict)
+    # record output
+    all_outputs.append(outfile)
 
     # save short wavelength layers to file
-    if track_version >= 0.4:
-        shortwvl_lyr = 'short_wavelength_displacement'
-        # get correction layers
-        shortwvl_fname = os.path.join(os.path.dirname(outfile),
-            f'{shortwvl_lyr}.h5')
-        shortwvl_files = \
-            [i.replace(disp_lyr_name, shortwvl_lyr) \
-             for i in unw_files]
+    if shortwvl_lyrs is True:
+        if track_version >= 0.4:
+            shortwvl_lyr = 'short_wavelength_displacement'
+            # get correction layers
+            shortwvl_fname = os.path.join(os.path.dirname(outfile),
+                f'{shortwvl_lyr}.h5')
+            shortwvl_files = \
+                [i.replace(disp_lyr_name, shortwvl_lyr) \
+                 for i in unw_files]
 
-        # write layers to file
-        save_stack(shortwvl_fname, ds_name_dict, meta, num_file,
-            shortwvl_files, ref_y, ref_x, water_mask, date12_list,
-            phase2range)
+            # write layers to file
+            save_stack(shortwvl_fname, ds_name_dict, meta, num_file,
+                shortwvl_files, water_mask, date12_list, phase2range,
+                ref_y, ref_x)
 
-        # record output
-        all_outputs.append(shortwvl_fname)
+            # record output
+            all_outputs.append(shortwvl_fname)
 
     return all_outputs
 
@@ -617,8 +684,8 @@ def prepare_timeseries(
 def mintpy_prepare_geometry(outfile, geom_dir, metadata,
                             water_mask_file=None):
     """Prepare the geometry file."""
-    print("-" * 50)
-    print(f"preparing geometry file: {outfile}")
+    print('-' * 50)
+    print(f'preparing geometry file: {outfile}')
 
     geom_path = Path(geom_dir)
     # copy metadata to meta
@@ -626,14 +693,14 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     meta["FILE_TYPE"] = "geometry"
 
     file_to_path = {
-        "los_east": geom_path / "los_east.tif",
-        "los_north": geom_path / "los_north.tif",
-        "height": geom_path / "height.tif",
-        "shadowMask": geom_path / "layover_shadow_mask.tif",
+        'los_east': geom_path / 'los_east.tif',
+        'los_north': geom_path / 'los_north.tif',
+        'height': geom_path / 'height.tif',
+        'shadowMask': geom_path / 'layover_shadow_mask.tif',
     }
 
     if water_mask_file:
-        file_to_path["waterMask"] = water_mask_file
+        file_to_path['waterMask'] = water_mask_file
 
     dsDict = {}
     for dsName, fname in file_to_path.items():
@@ -646,15 +713,15 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
 
             # write data to HDF5 file
         except FileNotFoundError as e:  # https://github.com/insarlab/MintPy/issues/1081
-            print(f"Skipping {fname}: {e}")
+            print(f'Skipping {fname}: {e}')
 
     # Compute the azimuth and incidence angles from east/north coefficients
     azimuth_angle, east, north = get_azimuth_ang(dsDict)
-    dsDict["azimuthAngle"] = azimuth_angle
+    dsDict['azimuthAngle'] = azimuth_angle
 
     up = np.sqrt(1 - east**2 - north**2)
     incidence_angle = np.rad2deg(np.arccos(up))
-    dsDict["incidenceAngle"] = incidence_angle
+    dsDict['incidenceAngle'] = incidence_angle
 
     writefile.write(dsDict, outfile, metadata=meta)
     return outfile
@@ -717,8 +784,7 @@ def prepare_stack(
     track_version,
     metadata,
     water_mask_file=None,
-    ref_lalo=None,
-    # baseline_dir=None,
+    ref_lalo=None
 ):
     """Prepare the input unw stack."""
     print("-" * 50)
@@ -735,7 +801,6 @@ def prepare_stack(
     if track_version >= 0.4:
         conv_factor = -1 * (4.0 * np.pi) / float(metadata["WAVELENGTH"])
 
-    print(unw_files)
     print(f"number of unwrapped interferograms: {num_pair}")
 
     # get list of interferometric correlation layers
@@ -867,6 +932,24 @@ def prepare_stack(
     prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
                           'temporalCoherence', meta)
 
+    # loop through and create files for temporal coherence
+    tempcoh_files = \
+            [i.replace(disp_lyr_name, 'connected_component_labels') \
+             for i in unw_files]
+    tempcoh_fname = os.path.join(os.path.dirname(outfile),
+        'connectedComponent.h5')
+    prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
+                          'connectedComponent', meta)
+
+    # loop through and create files for temporal coherence
+    tempcoh_files = \
+            [i.replace(disp_lyr_name, 'interferometric_correlation') \
+             for i in unw_files]
+    tempcoh_fname = os.path.join(os.path.dirname(outfile),
+        'interferometricCorrelation.h5')
+    prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
+                          'interferometricCorrelation', meta)
+
     return
 
 
@@ -898,6 +981,7 @@ def main(iargs=None):
                 filtered_unw_files.append(i)
         unw_files = filtered_unw_files
     
+    date12_list = _get_date_pairs(unw_files)
     print(f"Found {len(unw_files)} unwrapped files")
 
     # track product version
@@ -1023,7 +1107,6 @@ def main(iargs=None):
         metadata=meta,
         water_mask_file=inps.water_mask_file,
         ref_lalo=inps.ref_lalo,
-        # baseline_dir=inps.baseline_dir,
     )
 
     # prepare TS file
@@ -1039,16 +1122,114 @@ def main(iargs=None):
             metadata=meta,
             water_mask_file=inps.water_mask_file,
             ref_lalo=inps.ref_lalo,
-            # baseline_dir=inps.baseline_dir,
+            corr_lyrs=inps.corr_lyrs,
+            shortwvl_lyrs=inps.shortwvl_lyrs,
         )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
                             water_mask_file=inps.water_mask_file)
 
     # generate velocity fit
-    vel_file = os.path.join(inps.out_dir, "velocity.h5")
-    iargs = [og_ts_file, '-o', vel_file]
-    timeseries2velocity.main(iargs)
+    # first set variables
+    dolphin_ref_tif = os.path.join(inps.out_dir, 'dolphin_reference.tif')
+    dolphin_vel_file = os.path.join(inps.out_dir, 'velocity.tif')
+    vel_file = os.path.join(inps.out_dir, 'velocity.h5')
+    keep_open = False
+    dset_names = 'timeseries'
+    num_threads = 3
+    block_shape = (256, 256)
+
+    # extract one product to serve as a reference file
+    ds = gdal.Translate(dolphin_ref_tif, unw_files[0])
+    ds = None
+
+    # get list of times WRT to the reference time
+    with h5py.File(og_ts_file, 'r') as f:
+        ts_date_list = f['date'][:]
+
+    x_arr = [
+        datetime.datetime.strptime(
+            date.decode('utf-8'), '%Y%m%d'
+        )
+        for date in ts_date_list
+    ]
+    x_arr = datetime_to_float(x_arr)
+
+    # initiate dolphin file object
+    writer = BackgroundRasterWriter(dolphin_vel_file,
+        like_filename=dolphin_ref_tif)
+    s = HDF5StackReader.from_file_list(
+            [og_ts_file], dset_names=dset_names, keep_open=keep_open
+        )
+
+    # run dolphin velocity fitting algorithm in blocks
+    def read_and_fit(
+        readers: Sequence[HDF5StackReader],
+        rows: slice, cols: slice
+    ) -> tuple[np.ndarray, slice, slice]:
+
+        # Only use the cor_reader if it's the same shape as the unw_reader
+        if len(readers) == 2:
+            unw_reader, cor_reader = readers
+            unw_stack = unw_reader[:, rows, cols]
+            weights = cor_reader[:, rows, cols]
+            weights[weights < cor_threshold] = 0
+        else:
+            unw_stack = readers[0][:, rows, cols]
+            weights = None
+
+        # Fit a line to each pixel with weighted least squares
+        return (
+            estimate_velocity(
+                x_arr=x_arr,
+                unw_stack=unw_stack,
+                weight_stack=weights
+            ),
+            rows,
+            cols,
+        )
+
+    readers = [s[0,:,:]]
+    process_blocks(
+        readers=readers,
+        writer=writer,
+        func=read_and_fit,
+        block_shape=block_shape,
+        num_threads=num_threads,
+    )
+
+    writer.notify_finished()
+
+    # delete temporary reference file
+    os.remove(dolphin_ref_tif)
+
+    # update metadata field
+    meta["DATA_TYPE"] = 'float32'
+    meta["DATE12"] = date12_list[-1]
+    meta["FILE_PATH"] = og_ts_file
+    meta["FILE_TYPE"] = 'velocity'
+    meta["NO_DATA_VALUE"] = 'none'
+    meta["PROCESSOR"] = 'dolphin'
+    meta["REF_DATE"] = date12_list[-1].split('_')[0]
+    meta["START_DATE"] = date12_list[-1].split('_')[0]
+    meta["END_DATE"] = date12_list[-1].split('_')[-1]
+    meta["UNIT"] = 'm/year'
+
+    # initiate HDF5 file
+    row = s[0,:,:].shape[1]
+    col = s[0,:,:].shape[2]
+    ds_name_dict = {
+        "velocity": [np.float32, (row, col), None],
+    }
+    writefile.layout_hdf5(vel_file, ds_name_dict, metadata=meta)
+
+    # writing data to HDF5 file
+    print("writing data to HDF5 file {} with a mode ...".format(vel_file))
+    with h5py.File(vel_file, "a") as f:
+        vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
+        f["velocity"][:] = vel_arr
+
+    print("finished writing to HDF5 file: {}".format(vel_file))
 
     # generate mask file from unw phase field
     if inps.zero_mask is True:
