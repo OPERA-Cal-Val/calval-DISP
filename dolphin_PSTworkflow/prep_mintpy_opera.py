@@ -1216,8 +1216,8 @@ def main(iargs=None):
     meta["UNIT"] = 'm/year'
 
     # initiate HDF5 file
-    row = s[0,:,:].shape[1]
-    col = s[0,:,:].shape[2]
+    row = int(meta['LENGTH'])
+    col = int(meta['WIDTH'])
     ds_name_dict = {
         "velocity": [np.float32, (row, col), None],
     }
