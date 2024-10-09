@@ -678,7 +678,7 @@ def prepare_timeseries(
             # record output
             all_outputs.append(shortwvl_fname)
 
-    return all_outputs
+    return all_outputs, ref_meta
 
 
 def mintpy_prepare_geometry(outfile, geom_dir, metadata,
@@ -908,7 +908,8 @@ def prepare_stack(
             if val_at_refpoint == False or val_at_refpoint ==  0:
                 raise Exception(f'Specified input --ref-lalo {ref_lalo} '
                                 'not in masked region. Inspect output file'
-                                f'{msk_file} to inform selection of new point.')
+                                f'{water_mask_file} to inform selection '
+                                'of new point.')
 
     # extract correction layers
     # Remove dict entries not relevant to correction layers
@@ -1113,9 +1114,10 @@ def main(iargs=None):
     og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
     all_outputs = [og_ts_file]
+    ref_meta = None
     if inps.single_reference:
         # time-series (if inputs are all single-reference)
-        all_outputs = prepare_timeseries(
+        all_outputs, ref_meta = prepare_timeseries(
             outfile=og_ts_file,
             unw_files=unw_files,
             track_version=track_version,
@@ -1214,6 +1216,12 @@ def main(iargs=None):
     meta["START_DATE"] = date12_list[-1].split('_')[0]
     meta["END_DATE"] = date12_list[-1].split('_')[-1]
     meta["UNIT"] = 'm/year'
+    # apply reference point to velocity file
+    if ref_meta is not None:
+        meta['REF_LAT'] = ref_meta['REF_LAT']
+        meta['REF_LON'] = ref_meta['REF_LON']
+        meta['REF_Y'] = ref_meta['REF_Y']
+        meta['REF_X'] = ref_meta['REF_X']
 
     # initiate HDF5 file
     row = int(meta['LENGTH'])
@@ -1227,6 +1235,14 @@ def main(iargs=None):
     print("writing data to HDF5 file {} with a mode ...".format(vel_file))
     with h5py.File(vel_file, "a") as f:
         vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
+        # Convert 0s to NaN
+        vel_arr = np.where(vel_arr == 0, np.nan, vel_arr)
+        # apply reference point
+        if ref_meta is not None:
+            ref_y = int(ref_meta['REF_Y'])
+            ref_x = int(ref_meta['REF_X'])
+            vel_arr -= np.nan_to_num(vel_arr[ref_y, ref_x])
+        # write to file
         f["velocity"][:] = vel_arr
 
     print("finished writing to HDF5 file: {}".format(vel_file))
