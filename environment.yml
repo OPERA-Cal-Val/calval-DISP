@@ -28,8 +28,13 @@ dependencies:
   - rioxarray
   - ruptures
   - scipy>1.10.0
+  - seaborn
   - shapely
   - s3fs
   - utm
   - wget
+  - wkhtmltopdf
   - xarray
+  # Pip dependencies
+  - pip:
+    - imgkit  # Package to be installed with pip

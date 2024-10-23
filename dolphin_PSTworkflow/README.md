@@ -9,7 +9,7 @@ Repository of tools to leverage the dolphin software to produce pseudo- OPERA Su
     -   [Setup conda](#setup-conda)
     -   [Install main repository dependencies](#install-main-repository-dependencies)
     -   [Install development version of MintPy](#install-development-version-of-MintPy)
-    -   [Clone ATBD repo](#clone-ATBD-repo)
+    -   [Set PYTHONPATH](#set_pythonpath)
 2. [Running dolphin workflow](#running-dolphin-workflow)
     -   [Run PST dolphin tool](#run-pst-dolphin-tool)
     -   [Run MintPy preparation tool](#run-MintPy-preparation-tool)
@@ -75,12 +75,10 @@ export PYTHONPATH=/u/data-drive/username/src
 export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
 ```
 
-### Clone ATBD repo
+### Set PYTHONPATH
 ```.bash
-git clone https://github.com/nisar-solid/ATBD
-cd ATBD
 # set paths to prerequisite tools
-export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/ATBD"
+export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/calval-DISP"
 cd ../
 ```
 
