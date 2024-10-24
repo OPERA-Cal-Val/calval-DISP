@@ -10,6 +10,7 @@ dependencies:
   - dem_stitcher>=2.5.8
   - gdal>=3.4.1
   - geopandas
+  - git-lfs
   - h5py
   - joblib
   - jupyter_contrib_nbextensions
