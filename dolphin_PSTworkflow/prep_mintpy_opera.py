@@ -137,14 +137,6 @@ def _create_parser():
              "end-date in YYMMDD or YYYYMMDD format",
     )
     parser.add_argument(
-        "-b",
-        "--baseline-dir",
-        dest="baselineDir",
-        type=str,
-        default=None,
-        help="baseline directory (default: %(default)s).",
-    )
-    parser.add_argument(
         "-o",
         "--out-dir",
         type=str,
@@ -466,7 +458,6 @@ def save_stack(
     fname,
     ds_name_dict,
     meta,
-    num_file,
     file_list,
     water_mask,
     date12_list,
@@ -484,16 +475,12 @@ def save_stack(
     reflyr_name = file_list[0].split(':')[-1]
     print("writing data to HDF5 file {} with a mode ...".format( \
           fname))
+    num_file = len(file_list)
     with h5py.File(fname, "a") as f:
         prog_bar = ptime.progressBar(maxValue=num_file)
         for i,file_inc in enumerate(file_list):
             # read data using gdal
-            # if unw file, cannot read as masked array
-            # necessary to avoid errors with MintPy
-            if unw_file is True:
-                data = load_gdal(file_inc)
-            else:
-                data = load_gdal(file_inc, masked=True)
+            data = load_gdal(file_inc, masked=True)
 
             # apply reference point, if not None
             if ref_y is not None and ref_x is not None:
@@ -634,13 +621,13 @@ def prepare_timeseries(
                 [i.replace(disp_lyr_name, f'/corrections/{lyr}') \
                  for i in unw_files]
             # write layers to file
-            save_stack(lyr_fname, ds_name_dict, meta, num_file, lyr_paths,
+            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                 water_mask, date12_list, phase2range, ref_y, ref_x)
         else:
             lyr_paths = \
                 [i.replace(disp_lyr_name, lyr) for i in unw_files]
             # write layers to file
-            save_stack(lyr_fname, ds_name_dict, meta, num_file, lyr_paths,
+            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                 water_mask, date12_list, 1)
 
         # record outputs
@@ -653,7 +640,7 @@ def prepare_timeseries(
     mask_dict['interferometric_correlation'] = 0.3
 
     # write TS containing displacement layers to file
-    save_stack(outfile, ds_name_dict, meta, num_file, unw_files,
+    save_stack(outfile, ds_name_dict, meta, unw_files,
         water_mask, date12_list, phase2range, ref_y, ref_x, unw_file=True,
         mask_dict=mask_dict)
     # record output
@@ -671,7 +658,7 @@ def prepare_timeseries(
                  for i in unw_files]
 
             # write layers to file
-            save_stack(shortwvl_fname, ds_name_dict, meta, num_file,
+            save_stack(shortwvl_fname, ds_name_dict, meta,
                 shortwvl_files, water_mask, date12_list, phase2range,
                 ref_y, ref_x)
 
@@ -794,7 +781,6 @@ def prepare_stack(
 
     # get list of *.unw file
     num_pair = len(unw_files)
-    unw_ext = full_suffix(unw_files[0])
 
     conv_factor = 1
     # >=v0.4 increment in units of m, must be converted to phs
@@ -817,7 +803,8 @@ def prepare_stack(
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
         print(
-            "the number of *.unw and *.unw.conncomp or *.cor files are NOT consistent"
+            "the number of *.unw and *.unw.conncomp or *.cor files are "
+            "NOT consistent"
         )
         if len(unw_files) > len(cor_files):
             print("skip creating ifgramStack.h5 file.")
@@ -825,7 +812,8 @@ def prepare_stack(
 
         print("Keeping only cor files which match a unw file")
         unw_dates_set = set([tuple(get_dates(f)) for f in unw_files])
-        cor_files = [f for f in cor_files if tuple(get_dates(f)) in unw_dates_set]
+        cor_files = \
+            [f for f in cor_files if tuple(get_dates(f)) in unw_dates_set]
 
     # get date info: date12_list
     date12_list = _get_date_pairs(unw_files)
@@ -837,7 +825,8 @@ def prepare_stack(
     cols, rows = get_raster_xysize(unw_files[0])
 
     # define (and fill out some) dataset structure
-    date12_arr = np.array([x.split("_") for x in date12_list], dtype=np.string_)
+    date12_arr = np.array([x.split("_") for x in date12_list],
+                          dtype=np.string_)
     drop_ifgram = np.ones(num_pair, dtype=np.bool_)
     ds_name_dict = {
         "date": [date12_arr.dtype, (num_pair, 2), date12_arr],
@@ -871,8 +860,11 @@ def prepare_stack(
             zip(unw_files, cor_files, cc_files)
         ):
             # read/write *.unw file
-            f["unwrapPhase"][i] = load_gdal(
+            unw_arr = load_gdal(
                 unw_file, masked=True) * water_mask * conv_factor
+            # mask
+            unw_arr[unw_arr == 0] = np.nan
+            f["unwrapPhase"][i] = unw_arr
 
             # read/write *.cor file
             f["coherence"][i] = load_gdal(
@@ -960,7 +952,7 @@ def main(iargs=None):
 
     unw_files = sorted(
         glob.glob(inps.unw_file_glob),
-        key=lambda x: x.split('_')[-3][:8]
+        key=lambda x: x.split('_')[7][:8]
     )
 
     # filter input by specified dates

@@ -13,33 +13,55 @@ import itertools
 import os
 import sys
 from pathlib import Path
+from typing import Sequence
 
-# Related third-party imports
+# Third-party imports
 import affine
 import h5py
 import numpy as np
 import pyproj
 import rasterio
+from osgeo import gdal
 from rasterio import CRS
 from rasterio.warp import reproject, Resampling
+from tqdm import tqdm
 
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).parent / 'src'))
 
-# Local application/library specific imports
-from dolphin.utils import prepare_geometry
-from mintpy.cli import temporal_average, reference_point, mask, \
-    generate_mask, timeseries2velocity
+# Local application/library-specific imports
+from dem_stitcher.stitcher import stitch_dem
+from mintpy.cli import (
+    generate_mask,
+    mask,
+    temporal_average,
+    timeseries2velocity
+)
+from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
-from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
-from mintpy.utils.utils0 import azimuth2heading_angle
-from pst_dolphin_utils import create_external_files, get_raster_bounds, \
-    get_raster_crs, full_suffix, get_raster_xysize, get_raster_gt, \
-    load_gdal, warp_to_match
+from mintpy.utils import utils as ut
+from mintpy.utils.utils0 import (
+    azimuth2heading_angle,
+    calc_azimuth_from_east_north_obs
+)
+from opera_utils import get_dates
+from pst_dolphin_utils import (
+    BackgroundRasterWriter,
+    create_external_files,
+    datetime_to_float,
+    estimate_velocity,
+    full_suffix,
+    get_raster_bounds,
+    get_raster_crs,
+    get_raster_gt,
+    get_raster_xysize,
+    HDF5StackReader,
+    load_gdal,
+    process_blocks,
+    warp_to_match
+)
 from tile_mate import get_raster_from_tiles
 from tile_mate.stitcher import DATASET_SHORTNAMES
-from opera_utils import get_dates
-from dem_stitcher.stitcher import stitch_dem
 
 OPERA_DATASET_ROOT = './'
 
@@ -83,7 +105,7 @@ def _create_parser():
         "-c",
         "--cor-file-glob",
         type=str,
-        default="./interferograms/stitched/*.cor",
+        default="./interferograms/stitched/*.cor.tif",
         help="path pattern of unwrapped interferograms (default: %(default)s).",
     )
     parser.add_argument(
@@ -99,12 +121,20 @@ def _create_parser():
         help="GSLC metadata file or directory",
     )
     parser.add_argument(
-        "-b",
-        "--baseline-dir",
-        dest="baselineDir",
-        type=str,
+        "-s",
+        "--start-date",
+        dest='startDate',
         default=None,
-        help="baseline directory (default: %(default)s).",
+        help="remove/drop interferograms with date earlier than "
+             "start-date in YYMMDD or YYYYMMDD format",
+    )
+    parser.add_argument(
+        "-e",
+        "--end-date",
+        dest='endDate',
+        default=None,
+        help="remove/drop interferograms with date later than "
+             "end-date in YYMMDD or YYYYMMDD format",
     )
     parser.add_argument(
         "-o",
@@ -176,6 +206,12 @@ def _create_parser():
         default='0.4',
         help="Specify minimum coherence of reference pixel "
              "for max-coherence method.",
+    )
+    parser.add_argument(
+        "--zero-mask",
+        dest="zero_mask",
+        action="store_true",
+        help="Mask all pixels with zero value in unw phase",
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -405,16 +441,78 @@ def get_azimuth_ang(dsDict):
     return azimuth_angle, east, north
 
 
+def save_stack(
+    fname,
+    ds_name_dict,
+    meta,
+    file_list,
+    water_mask,
+    date12_list,
+    phase2range=1,
+    ref_y=None,
+    ref_x=None,
+    unw_file=False,
+    mask_dict={},
+    ):
+    """Prepare h5 file for input stack of layers"""
+    # initiate file
+    writefile.layout_hdf5(fname, ds_name_dict, metadata=meta)
+
+    # writing data to HDF5 file
+    reflyr_name = full_suffix(file_list[0])
+    print("writing data to HDF5 file {} with a mode ...".format( \
+          fname))
+    num_file = len(file_list)
+    with h5py.File(fname, "a") as f:
+        prog_bar = ptime.progressBar(maxValue=num_file)
+        for i,file_inc in enumerate(file_list):
+            # read data using gdal
+            data = load_gdal(file_inc, masked=True)
+
+            # apply reference point, if not None
+            if ref_y is not None and ref_x is not None:
+                data -= np.nan_to_num(data[ref_y, ref_x])
+
+            # mask by specified dict of thresholds
+            for dict_key in mask_dict.keys():
+                mask_lyr = file_inc.replace(reflyr_name, dict_key)
+                mask_thres = mask_dict[dict_key]
+                mask_data = load_gdal(mask_lyr)
+                data[mask_data == mask_thres] = np.nan
+
+            # also apply water mask
+            data = data * water_mask
+
+            # if unw file, convert nans to 0
+            # necessary to avoid errors with MintPy velocity fitting
+            if unw_file is True:
+                data = np.nan_to_num(data)
+
+            # apply conversion factor and add to cube
+            f["timeseries"][i + 1] = data * phase2range
+            prog_bar.update(i + 1, suffix=date12_list[i])
+
+        prog_bar.close()
+
+        print("set value at the first acquisition to ZERO.")
+        f["timeseries"][0] = 0.0
+
+    print("finished writing to HDF5 file: {}".format(fname))
+
+
 def prepare_timeseries(
     outfile,
     unw_files,
     metadata,
     water_mask_file=None,
-    baseline_dir=None,
+    ref_lalo=None,
 ):
     """Prepare the timeseries file."""
     print("-" * 50)
     print("preparing timeseries file: {}".format(outfile))
+
+    # get file ext
+    unw_ext = full_suffix(unw_files[0])
 
     # copy metadata to meta
     meta = {key: value for key, value in metadata.items()}
@@ -434,8 +532,6 @@ def prepare_timeseries(
 
     # baseline info
     pbase = np.zeros(num_date, dtype=np.float32)
-    if baseline_dir is not None:
-        raise NotImplementedError
 
     # size info
     cols, rows = get_raster_xysize(unw_files[0])
@@ -459,31 +555,66 @@ def prepare_timeseries(
     meta["FILE_TYPE"] = "timeseries"
     meta["UNIT"] = "m"
     # meta["REF_DATE"] = ref_date # might not be the first date!
+    ##################################################
+    # pass reference point
+    # if not specified, chose reference point from max value in coherence file
+    coord = ut.coordinate(meta)
+    if ref_lalo is not None:
+        ref_lat, ref_lon = ref_lalo.split()
+        # get value at coordinate
+        (ref_y,
+         ref_x) = coord.geo2radar(np.array(float(ref_lat)),
+                                  np.array(float(ref_lon)))[0:2]
+    else:
+        coh_file = os.path.join(os.path.dirname(outfile), 'avgSpatialCoh.h5')
+        coh = readfile.read(coh_file)[0]
+        if water_mask.dtype.name == 'bool':
+            coh[water_mask == False] = 0.0
+        else:
+            coh[water_mask == 0] = 0.0
+        ref_y, ref_x = np.unravel_index(np.argmax(coh), coh.shape)
+        del coh
 
-    # initiate HDF5 file
-    writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
+    # update metadata to reflect reference point
+    ref_meta = reference_point_attribute(meta, y=ref_y, x=ref_x)
+    meta['REF_LAT'] = ref_meta['REF_LAT']
+    meta['REF_LON'] = ref_meta['REF_LON']
+    meta['REF_Y'] = ref_meta['REF_Y']
+    meta['REF_X'] = ref_meta['REF_X']
 
-    # writing data to HDF5 file
-    print("writing data to HDF5 file {} with a mode ...".format(outfile))
-    with h5py.File(outfile, "a") as f:
-        prog_bar = ptime.progressBar(maxValue=num_file)
-        for i, unw_file in enumerate(unw_files):
-            # read data using gdal
-            data = load_gdal(unw_file) * water_mask
-            # convert nans to 0 to avoid errors with MintPy velocity fitting
-            data = np.nan_to_num(data)
-            f["timeseries"][i + 1] = data * phase2range
-            prog_bar.update(i + 1, suffix=date12_list[i])
-        prog_bar.close()
+    # loop through and create files for each correction layer and mask layer
+    all_outputs = []
+    mask_layers = {}
+    mask_layers['connected_component_labels'] = '.unw.conncomp.tif'
+    mask_layers['interferometric_correlation'] = '.int.cor.tif'
+    
 
-        print("set value at the first acquisition to ZERO.")
-        f["timeseries"][0] = 0.0
+    for lyr, ext in mask_layers.items():
+        # get layer names and paths
+        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+        lyr_paths = \
+            [str(x).replace(unw_ext, ext) \
+                for x in unw_files]
+        # write layers to file
+        save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
+            water_mask, date12_list, 1)
 
-    print("finished writing to HDF5 file: {}".format(outfile))
+        # record outputs
+        all_outputs.append(lyr_fname)
 
-    all_outputs = [outfile]
+    # set dictionary that will be used to mask TS by specified thresholds
+    mask_dict = {}
+    mask_dict['.unw.conncomp.tif'] = 0
+    mask_dict['.int.cor.tif'] = 0.3
 
-    return all_outputs
+    # write TS containing displacement layers to file
+    save_stack(outfile, ds_name_dict, meta, unw_files,
+        water_mask, date12_list, phase2range, ref_y, ref_x, unw_file=True,
+        mask_dict=mask_dict)
+    # record output
+    all_outputs.append(outfile)
+
+    return all_outputs, ref_meta
 
 
 def mintpy_prepare_geometry(outfile, geom_dir, metadata,
@@ -559,7 +690,7 @@ def prepare_stack(
     cor_files,
     metadata,
     water_mask_file=None,
-    # baseline_dir=None,
+    ref_lalo=None
 ):
     """Prepare the input unw stack."""
     print("-" * 50)
@@ -584,7 +715,8 @@ def prepare_stack(
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
         print(
-            "the number of *.unw and *.unw.conncomp or *.cor files are NOT consistent"
+            "the number of *.unw and *.unw.conncomp or *.cor files are "
+            "NOT consistent"
         )
         if len(unw_files) > len(cor_files):
             print("skip creating ifgramStack.h5 file.")
@@ -592,7 +724,8 @@ def prepare_stack(
 
         print("Keeping only cor files which match a unw file")
         unw_dates_set = set([tuple(get_dates(f)) for f in unw_files])
-        cor_files = [f for f in cor_files if tuple(get_dates(f)) in unw_dates_set]
+        cor_files = \
+            [f for f in cor_files if tuple(get_dates(f)) in unw_dates_set]
 
     # get date info: date12_list
     date12_list = _get_date_pairs(unw_files)
@@ -604,7 +737,8 @@ def prepare_stack(
     cols, rows = get_raster_xysize(unw_files[0])
 
     # define (and fill out some) dataset structure
-    date12_arr = np.array([x.split("_") for x in date12_list], dtype=np.string_)
+    date12_arr = np.array([x.split("_") for x in date12_list],
+                          dtype=np.string_)
     drop_ifgram = np.ones(num_pair, dtype=np.bool_)
     ds_name_dict = {
         "date": [date12_arr.dtype, (num_pair, 2), date12_arr],
@@ -638,8 +772,11 @@ def prepare_stack(
             zip(unw_files, cor_files, cc_files)
         ):
             # read/write *.unw file
-            f["unwrapPhase"][i] = load_gdal(
+            unw_arr = load_gdal(
                 unw_file, masked=True) * water_mask
+            # mask
+            unw_arr[unw_arr == 0] = np.nan
+            f["unwrapPhase"][i] = unw_arr
 
             # read/write *.cor file
             f["coherence"][i] = load_gdal(
@@ -654,22 +791,76 @@ def prepare_stack(
 
     print("finished writing to HDF5 file: {}".format(outfile))
 
-    # generate mask file from unw phase field
-    msk_file = os.path.join(os.path.dirname(outfile), 'combined_msk.h5')
-    iargs = [outfile, 'unwrapPhase', '-o', msk_file, '--nonzero']
-    generate_mask.main(iargs)
+    # generate average spatial coherence
+    coh_dir = os.path.dirname(os.path.dirname(outfile))
+    coh_file = os.path.join(coh_dir, 'avgSpatialCoh.h5')
+    iargs = [outfile, '--dataset', 'coherence', '-o', coh_file, '--update']
+    temporal_average.main(iargs)
 
-    return msk_file
+    if water_mask_file is not None:
+        # determine whether the defined reference point is valid
+        if ref_lalo is not None:
+            ref_lat, ref_lon = ref_lalo.split()
+            # get value at coordinate
+            atr = readfile.read_attribute(coh_file)
+            coord = ut.coordinate(atr)
+            (ref_y,
+             ref_x) = coord.geo2radar(np.array(float(ref_lat)),
+                                      np.array(float(ref_lon)))[0:2]
+            val_at_refpoint = water_mask[ref_y, ref_x]
+            # exit if reference point is in masked area
+            if val_at_refpoint == False or val_at_refpoint ==  0:
+                raise Exception(f'Specified input --ref-lalo {ref_lalo} '
+                                'not in masked region. Inspect output file'
+                                f'{water_mask_file} to inform selection '
+                                'of new point.')
+
+    return
 
 
 def main(iargs=None):
     """Run the preparation functions."""
     inps = cmd_line_parse(iargs)
 
-    unw_files = sorted(glob.glob(inps.unw_file_glob))
+    unw_files = sorted(
+        glob.glob(inps.unw_file_glob),
+        key=lambda x: x.split('_')[1][:8]
+    )
     print(f"Found {len(unw_files)} unwrapped files")
     cor_files = sorted(glob.glob(inps.cor_file_glob))
+    cor_files = sorted(
+        glob.glob(inps.cor_file_glob),
+        key=lambda x: x.split('_')[1][:8]
+    )
     print(f"Found {len(cor_files)} correlation files")
+
+    # filter input by specified dates
+    if inps.startDate is not None:
+        startDate = int(inps.startDate)
+        filtered_unw_files = []
+        filtered_cor_files = []
+        for i in enumerate(unw_files):
+            sec_date = int(os.path.basename(i[1]).split('_')[1][:8])
+            if sec_date >= startDate:
+                filtered_unw_files.append(i[1])
+                filtered_cor_files.append(cor_files[i[0]])
+        unw_files = filtered_unw_files
+        cor_files = filtered_cor_files
+
+    if inps.endDate is not None:
+        endDate = int(inps.endDate)
+        filtered_unw_files = []
+        filtered_cor_files = []
+        for i in unw_files:
+            sec_date = int(os.path.basename(i).split('_')[1][:8])
+            if sec_date <= endDate:
+                filtered_unw_files.append(i)
+                filtered_cor_files.append(cor_files[i[0]])
+        unw_files = filtered_unw_files
+        cor_files = filtered_cor_files
+    
+    date12_list = _get_date_pairs(unw_files)
+    print(f"Found {len(unw_files)} unwrapped files")
 
     # get geolocation info
     static_dir = Path(inps.meta_file)
@@ -708,24 +899,36 @@ def main(iargs=None):
             inps.dem_file = dem_file[0]
             print(f"Found DEM file {inps.dem_file}")
 
-    # create geometry files, if they do not exist
+    # check if geometry files exist
+    geometry_files = ['los_east.tif', 'los_north.tif',
+                      'layover_shadow_mask.tif']
+    missing_files = [file for file in geometry_files
+                     if not (geometry_dir / file).is_file()]
+    if missing_files != []:
+        missing_files_str = ', '.join(missing_files)
+        raise FileNotFoundError(
+            'The following geometry files are missing in the directory '
+            f'{geometry_dir}: {missing_files_str}'
+        )
+
+    # check if height file exists
+    height_file = geometry_dir / "height.tif"
+    if not height_file.is_file():
+        print(f"Generated {height_file} file")
+        warp_to_match(
+                    input_file=inps.dem_file,
+                    match_file=unw_files[0],
+                    output_file=height_file,
+                    resample_alg="cubic",
+                )
+
+    # check static layer naming convention
     allcaps_geometry = True
     static_files = sorted(Path(static_dir).glob("*STATIC_*.h5"))
     # capture alternate filename convention
     if static_files == []:
         allcaps_geometry = False
         static_files = sorted(Path(static_dir).glob("*static_*.h5"))
-    if not any(geometry_dir.iterdir()):
-        # create geometry files
-        frame_geometry_files = prepare_geometry(
-            geometry_dir=geometry_dir,
-            geo_files=static_files,
-            matching_file=unw_files[0],
-            dem_file=inps.dem_file,
-            epsg=epsg,
-            out_bounds=out_bounds,
-            strides={'x': 6, 'y': 3} #hardcoded
-        )
 
     # translate input options
     processor = "sweets"  # isce_utils.get_processor(inps.meta_file)
@@ -753,68 +956,165 @@ def main(iargs=None):
 
     # prepare ifgstack, which contains UNW phase + conn comp + coherence
     stack_file = os.path.join(inps.out_dir, "inputs/ifgramStack.h5")
-    msk_file = prepare_stack(
+    prepare_stack(
         outfile=stack_file,
         unw_files=unw_files,
         cor_files=cor_files,
         metadata=meta,
         water_mask_file=inps.water_mask_file,
-        # baseline_dir=inps.baseline_dir,
+        ref_lalo=inps.ref_lalo,
     )
 
     # prepare TS file
     og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
     all_outputs = [og_ts_file]
+    ref_meta = None
     if inps.single_reference:
         # time-series (if inputs are all single-reference)
-        all_outputs = prepare_timeseries(
+        all_outputs, ref_meta = prepare_timeseries(
             outfile=og_ts_file,
             unw_files=unw_files,
             metadata=meta,
             water_mask_file=inps.water_mask_file,
-            #!#processor=processor,
-            # baseline_dir=inps.baseline_dir,
+            ref_lalo=inps.ref_lalo,
         )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
                             water_mask_file=inps.water_mask_file)
 
-    # generate average spatial coherence
-    coh_file = os.path.join(inps.out_dir, "avgSpatialCoh.h5")
-    iargs = [stack_file, '--dataset', 'coherence', '-o', coh_file, '--update']
-    temporal_average.main(iargs)
-
-
-    # if not specified, chose automatic reference point from coherence file
-    for og_ts in all_outputs:
-        if inps.ref_lalo is not None:
-            ref_lat, ref_lon = inps.ref_lalo.split()
-            iargs = [og_ts, '-l', ref_lat, '-L', ref_lon]
-        else:
-            iargs = [og_ts, '-c', coh_file, '--min-coherence',
-                inps.min_coherence, '--method', 'maxCoherence']
-        # add argument for mask
-        iargs.extend(['--mask', msk_file])
-        # attempt to rereference TS, will fail if fields are empty
-        try:
-            reference_point.main(iargs)
-        except:
-            pass
-
-    # mask TS file, since reference_point adds offset back in masked field
-    iargs = [og_ts_file, '--mask', msk_file]
-    mask.main(iargs)
-    # capture masked TS file
-    ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
-
     # generate velocity fit
-    vel_file = os.path.join(inps.out_dir, "velocity.h5")
-    iargs = [og_ts_file, '-o', vel_file]
-    timeseries2velocity.main(iargs)
-    # mask velocity file
-    iargs = [vel_file, '--mask', msk_file]
-    mask.main(iargs)
+    # first set variables
+    dolphin_ref_tif = os.path.join(inps.out_dir, 'dolphin_reference.tif')
+    dolphin_vel_file = os.path.join(inps.out_dir, 'velocity.tif')
+    vel_file = os.path.join(inps.out_dir, 'velocity.h5')
+    keep_open = False
+    dset_names = 'timeseries'
+    num_threads = 3
+    block_shape = (256, 256)
+
+    # extract one product to serve as a reference file
+    ds = gdal.Translate(dolphin_ref_tif, unw_files[0])
+    ds = None
+
+    # get list of times WRT to the reference time
+    with h5py.File(og_ts_file, 'r') as f:
+        ts_date_list = f['date'][:]
+
+    x_arr = [
+        datetime.datetime.strptime(
+            date.decode('utf-8'), '%Y%m%d'
+        )
+        for date in ts_date_list
+    ]
+    x_arr = datetime_to_float(x_arr)
+
+    # initiate dolphin file object
+    writer = BackgroundRasterWriter(dolphin_vel_file,
+        like_filename=dolphin_ref_tif)
+    s = HDF5StackReader.from_file_list(
+            [og_ts_file], dset_names=dset_names, keep_open=keep_open
+        )
+
+    # run dolphin velocity fitting algorithm in blocks
+    def read_and_fit(
+        readers: Sequence[HDF5StackReader],
+        rows: slice, cols: slice
+    ) -> tuple[np.ndarray, slice, slice]:
+
+        # Only use the cor_reader if it's the same shape as the unw_reader
+        if len(readers) == 2:
+            unw_reader, cor_reader = readers
+            unw_stack = unw_reader[:, rows, cols]
+            weights = cor_reader[:, rows, cols]
+            weights[weights < cor_threshold] = 0
+        else:
+            unw_stack = readers[0][:, rows, cols]
+            weights = None
+
+        # Fit a line to each pixel with weighted least squares
+        return (
+            estimate_velocity(
+                x_arr=x_arr,
+                unw_stack=unw_stack,
+                weight_stack=weights
+            ),
+            rows,
+            cols,
+        )
+
+    readers = [s[0,:,:]]
+    process_blocks(
+        readers=readers,
+        writer=writer,
+        func=read_and_fit,
+        block_shape=block_shape,
+        num_threads=num_threads,
+    )
+
+    writer.notify_finished()
+
+    # delete temporary reference file
+    os.remove(dolphin_ref_tif)
+
+    # update metadata field
+    meta["DATA_TYPE"] = 'float32'
+    meta["DATE12"] = date12_list[-1]
+    meta["FILE_PATH"] = og_ts_file
+    meta["FILE_TYPE"] = 'velocity'
+    meta["NO_DATA_VALUE"] = 'none'
+    meta["PROCESSOR"] = 'dolphin'
+    meta["REF_DATE"] = date12_list[-1].split('_')[0]
+    meta["START_DATE"] = date12_list[-1].split('_')[0]
+    meta["END_DATE"] = date12_list[-1].split('_')[-1]
+    meta["UNIT"] = 'm/year'
+    # apply reference point to velocity file
+    if ref_meta is not None:
+        meta['REF_LAT'] = ref_meta['REF_LAT']
+        meta['REF_LON'] = ref_meta['REF_LON']
+        meta['REF_Y'] = ref_meta['REF_Y']
+        meta['REF_X'] = ref_meta['REF_X']
+
+    # initiate HDF5 file
+    row = int(meta['LENGTH'])
+    col = int(meta['WIDTH'])
+    ds_name_dict = {
+        "velocity": [np.float32, (row, col), None],
+    }
+    writefile.layout_hdf5(vel_file, ds_name_dict, metadata=meta)
+
+    # writing data to HDF5 file
+    print("writing data to HDF5 file {} with a mode ...".format(vel_file))
+    with h5py.File(vel_file, "a") as f:
+        vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
+        # Convert 0s to NaN
+        vel_arr = np.where(vel_arr == 0, np.nan, vel_arr)
+        # apply reference point
+        if ref_meta is not None:
+            ref_y = int(ref_meta['REF_Y'])
+            ref_x = int(ref_meta['REF_X'])
+            vel_arr -= np.nan_to_num(vel_arr[ref_y, ref_x])
+        # write to file
+        f["velocity"][:] = vel_arr
+
+    print("finished writing to HDF5 file: {}".format(vel_file))
+
+    # generate mask file from unw phase field
+    if inps.zero_mask is True:
+        msk_file = os.path.join(os.path.dirname(og_ts_file),
+            'combined_msk.h5')
+        iargs = [stack_file, 'unwrapPhase', '-o', msk_file, '--nonzero']
+        generate_mask.main(iargs)
+
+        # mask TS file, since reference_point adds offset back in masked field
+        iargs = [og_ts_file, '--mask', msk_file]
+        mask.main(iargs)
+        # capture masked TS file
+        ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
+
+        # mask velocity file
+        iargs = [vel_file, '--mask', msk_file]
+        mask.main(iargs)
 
     print("Done.")
     return
