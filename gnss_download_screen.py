@@ -684,7 +684,7 @@ def main(inps):
     plot_gnss_stations_frame(gdf_sites, DISP_region_poly, figname=f'{gnss_csv_dir}/GNSS_stations_filtered_F{frameID_str}.png', title=f'Selected GNSS Stations ({len(gdf_sites)} stations) within FrameID {frameID_str}')
 
     # Save final kept stations to csv lookup file
-    gnss_csv_file = f'{gnss_csv_dir}/frame{frameID_str}.csv'
+    gnss_csv_file = f'{gnss_csv_dir}/F{frameID_str}.csv'
     df_gnss = pd.DataFrame({'site': site_names,
                             'lat': use_lats_keepwgs84,
                             'lon': use_lons_keepwgs84})
@@ -692,7 +692,7 @@ def main(inps):
     del df_gnss
 
     # Also track final rejected stations to csv file for debugging purposes
-    rejected_gnss_csv_file = f'{gnss_csv_dir}/frame{frameID_str}_rejectedstations.csv'
+    rejected_gnss_csv_file = f'{gnss_csv_dir}/F{frameID_str}_rejectedstations.csv'
     df_gnss = pd.DataFrame({'site': bad_stn,
                             'lat': bad_lats_keepwgs84,
                             'lon': bad_lons_keepwgs84})
