@@ -276,11 +276,11 @@ def createParser(iargs = None):
     parser.add_argument("--frameID",
                         required=True, type=int, help='DISP-S1 Frame ID (e.g., 11116)')
     parser.add_argument("--startDate",
-                        default='20160101', type=str, help='start date of DISP-S1, YYYYMMDD (default: 20160101)')
+                        default='20160701', type=str, help='start date of DISP-S1, YYYYMMDD (default: 20160701)')
     parser.add_argument("--endDate",
                         default='20240930', type=str, help='end date of DISP-S1, YYYYMMDD (default: 20240930)')
-    parser.add_argument("--gps_completeness_threshold",
-                        default=0.9, type=float, help='threshold by completeness of GNSS measurement (default: 0.9)')
+    parser.add_argument("--gnss_completeness_threshold",
+                        default=0.8, type=float, help='threshold by completeness of GNSS measurement (default: 0.8)')
     parser.add_argument("--gnss_thr_eq", 
                         default=11.0, type=float, help='threshold of earthquake magnitude for removing GNSS stations (default: 11)')
     return parser.parse_args(args=iargs)
@@ -294,7 +294,7 @@ def main(inps):
     start_date = inps.startDate
     end_date = inps.endDate
 
-    gps_completeness_threshold = inps.gps_completeness_threshold
+    gnss_completeness_threshold = inps.gnss_completeness_threshold
     gnss_thr_eq = inps.gnss_thr_eq
 
     # flag for plotting image
@@ -306,20 +306,20 @@ def main(inps):
 
     # [optional] manually remove additional stations
     SITE_GNSS_REMOVE_MAPPING = {
-        '8622': ['CTNH', 'NJHC', 'NJHT', 'NJNT', 'NJSC', 'NYBR', 'NYRH' , 'ZNY1'],  # New York
-        '8882': ['LKHU', 'TXCN', 'TXGA', 'TXHA', 'TXHE'],  # Houston
-        '9156': ['OREO', 'P175', 'P177', 'P215', 'P235'],  # South San Francisco
-        '11115': ['ALTH', 'CHOW', 'DIAB', 'EBMD', 'OHLN', 'OREO', 'P177', 'P215'],  # Central California
-        '11116': ['ALTH', 'CAND', 'LAND', 'MULN', 'P174', 'P175', 'P235', 'P296', 'P532', 'P533', 'P540', 'POMM'],  # Central California
+        '8622': ['BGI1', 'CTBR', 'CTNH', 'NJHC', 'NJHT', 'NJNT', 'NJSC', 'NYBR', 'NYRH', 'ZNY1'],  # New York
+        '8882': ['TXLQ', 'HCC2', 'KPCS', 'TXBH', 'TXRS', 'TXVC', 'UH01', 'UHDT', 'UHF1', 'UHKS', 'UTEX', 'LKHU', 'TXCN', 'TXGA', 'TXHA', 'TXHE', 'UHJF'],  # Houston
+        '9156': ['OREO', 'P175', 'P177', 'P215', 'P235', 'CAP4', 'CSJB', 'FLNT', 'MHCB', 'P174', 'P221'],  # South San Francisco
+        '11115': ['ALTH', 'CHOW', 'DIAB', 'EBMD', 'OHLN', 'OREO', 'P177', 'P215', 'CAP4', 'CCSF', 'CSJB', 'FLNT', 'MHCB', 'P221', 'P274'],  # Central California
+        '11116': ['ALTH', 'CAND', 'LAND', 'MULN', 'P174', 'P175', 'P235', 'P296', 'P532', 'P533', 'P540', 'POMM', 'FLNT', 'RDGM', 'TBLP'],  # Central California
         '12640': [],  # Florida
-        '18903': ['BKAP', 'BSRY', 'EDPP', 'HCMN', 'LJRN', 'P582', 'RAMT', 'THCP', 'WORG'],  # Ridgecrest / Rosamond
-        '28486': ['OKAL', 'TXCH', 'TXWL'],  # Oklahoma
+        '18903': ['BKAP', 'BSRY', 'EDPP', 'HCMN', 'LJRN', 'P582', 'RAMT', 'THCP', 'WORG', 'CAVI', 'COSO', 'FOXG', 'QHTP'],  # Ridgecrest / Rosamond
+        '28486': ['OKAL', 'TXCH', 'TXWL', 'OKAO', 'OKCS', 'OKER'],  # Oklahoma
         '33039': ['HOLE'],  # Hawaii
-        '33065': ['AC25', 'CDB8'],  # Unimak, AK
+        '33065': ['AC25', 'CDB8', 'AB06', 'AC42', 'AV38'],  # Unimak, AK
         '36542': ['ALTH', 'CA99', 'CAND', 'CHOW', 'CRCN', 'DOND', 'LAND', 'LEMA', 'MULN', 'MUSB', 'P173',
-                'P174', 'P175', 'P235', 'P296', 'POMM', 'RAPT', 'RBRU', 'SAWC', 'SHRC'],  # Central California
+                'P174', 'P175', 'P235', 'P296', 'POMM', 'RAPT', 'RBRU', 'SAWC', 'SHRC', 'FLNT', 'P638', 'TBLP'],  # Central California
         '42779': ['AC57', 'ATW2'],  # Alaska
-    }
+    }       # list of bad GNSS stations made from timeperiod (20160701-20240930) and gnss_completeness_threshold at 0.6
 
     def get_gnss_to_remove(site):
         return SITE_GNSS_REMOVE_MAPPING.get(site, [])
@@ -508,7 +508,7 @@ def main(inps):
         record_original_ts = f'{orig_gnss_ts}/{stn}.tenv3'
 
         # select GNSS stations based on data completeness
-        if (range_days * gps_completeness_threshold <= gnss_count) \
+        if (range_days * gnss_completeness_threshold <= gnss_count) \
             and stn not in gnss_to_remove:
             
             # plotting after filtering based on completeness
@@ -684,7 +684,7 @@ def main(inps):
     plot_gnss_stations_frame(gdf_sites, DISP_region_poly, figname=f'{gnss_csv_dir}/GNSS_stations_filtered_F{frameID_str}.png', title=f'Selected GNSS Stations ({len(gdf_sites)} stations) within FrameID {frameID_str}')
 
     # Save final kept stations to csv lookup file
-    gnss_csv_file = f'{gnss_csv_dir}/F{frameID_str}.csv'
+    gnss_csv_file = f'{gnss_csv_dir}/frame{frameID_str}.csv'
     df_gnss = pd.DataFrame({'site': site_names,
                             'lat': use_lats_keepwgs84,
                             'lon': use_lons_keepwgs84})
@@ -692,7 +692,7 @@ def main(inps):
     del df_gnss
 
     # Also track final rejected stations to csv file for debugging purposes
-    rejected_gnss_csv_file = f'{gnss_csv_dir}/F{frameID_str}_rejectedstations.csv'
+    rejected_gnss_csv_file = f'{gnss_csv_dir}/frame{frameID_str}_rejectedstations.csv'
     df_gnss = pd.DataFrame({'site': bad_stn,
                             'lat': bad_lats_keepwgs84,
                             'lon': bad_lons_keepwgs84})
