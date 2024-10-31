@@ -25,6 +25,10 @@ from osgeo import gdal
 from rasterio import CRS
 from rasterio.warp import reproject, Resampling
 from tqdm import tqdm
+import networkx as nx
+
+import warnings
+warnings.filterwarnings("ignore")
 
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).parent / 'src'))
@@ -75,7 +79,6 @@ EXAMPLE = """example:
       -u "pst_output/dolphin_output/stitched_interferograms/*.unw.zeroed.tif"
       --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
       --ref-lalo '19.2485991551617 -155.32285148610057'
-      --single-reference
       -o mintpy_output
 
 """  # noqa: E501
@@ -163,15 +166,6 @@ def _create_parser():
         help=(
             "number of looks in azimuth direction, for multilooking applied after"
             " fringe processing.\nOnly impacts metadata. (default: %(default)s)."
-        ),
-    )
-    parser.add_argument(
-        "--single-reference",
-        dest="single_reference",
-        action="store_true",
-        help=(
-            "Indicate that all the unwrapped ifgs are single reference, which allows"
-            " use to create the timeseries.h5 file directly without inversion."
         ),
     )
     parser.add_argument(
@@ -512,7 +506,6 @@ def save_stack(
 
     print("finished writing to HDF5 file: {}".format(fname))
 
-
 def prepare_timeseries(
     outfile,
     unw_files,
@@ -523,7 +516,12 @@ def prepare_timeseries(
     corr_lyrs=False,
     shortwvl_lyrs=False,
 ):
-    """Prepare the timeseries file."""
+    """
+    Prepare the timeseries file accounting for different reference dates in input files.
+    
+    The function now handles cases where input files might have different reference dates,
+    calculating cumulative displacement by properly chaining measurements based on their date pairs.
+    """
     print("-" * 50)
     print("preparing timeseries file: {}".format(outfile))
 
@@ -537,24 +535,34 @@ def prepare_timeseries(
     if track_version >= 0.4:
         disp_lyr_name = 'displacement'
         phase2range = 1
+    if track_version >= 0.7:
+       sp_coh_lyr_name = 'estimated_spatial_coherence'
+    else:
+       sp_coh_lyr_name = 'interferoemetric_correlation'
 
     # grab date list from the filename
     date12_list = _get_date_pairs(unw_files)
     num_file = len(unw_files)
     print("number of unwrapped interferograms: {}".format(num_file))
 
+    # Create a directed graph to represent date connections
+    G = nx.DiGraph()
+    
+    # Add edges (measurements) to the graph
     date_pairs = [dl.split("_") for dl in date12_list]
+    for (ref_date, sec_date), file in zip(date_pairs, unw_files):
+        G.add_edge(ref_date, sec_date, file=file)
+
+    # Get all unique dates
     date_list = sorted(set(itertools.chain.from_iterable(date_pairs)))
-    # ref_date = date12_list[0].split("_")[0]
-    # date_list = [ref_date] + [date12.split("_")[1] for date12 in date12_list]
     num_date = len(date_list)
     print("number of acquisitions: {}\n{}".format(num_date, date_list))
 
-    # baseline info
-    pbase = np.zeros(num_date, dtype=np.float32)
-
     # size info
     cols, rows = get_raster_xysize(unw_files[0])
+
+    # baseline info
+    pbase = np.zeros(num_date, dtype=np.float32)
 
     # define dataset structure
     dates = np.array(date_list, dtype=np.string_)
@@ -571,20 +579,12 @@ def prepare_timeseries(
     else:
         water_mask = np.ones((rows, cols), dtype=np.float32)
 
-    # initiate file attributes
-    meta["FILE_TYPE"] = "timeseries"
-    meta["UNIT"] = "m"
-    # meta["REF_DATE"] = ref_date # might not be the first date!
-    ##################################################
-    # pass reference point
-    # if not specified, chose reference point from max value in coherence file
+    # handle reference point
     coord = ut.coordinate(meta)
     if ref_lalo is not None:
         ref_lat, ref_lon = ref_lalo.split()
-        # get value at coordinate
-        (ref_y,
-         ref_x) = coord.geo2radar(np.array(float(ref_lat)),
-                                  np.array(float(ref_lon)))[0:2]
+        ref_y, ref_x = coord.geo2radar(np.array(float(ref_lat)),
+                                     np.array(float(ref_lon)))[0:2]
     else:
         coh_file = os.path.join(os.path.dirname(outfile), 'avgSpatialCoh.h5')
         coh = readfile.read(coh_file)[0]
@@ -595,78 +595,123 @@ def prepare_timeseries(
         ref_y, ref_x = np.unravel_index(np.argmax(coh), coh.shape)
         del coh
 
-    # update metadata to reflect reference point
+    # update metadata
     ref_meta = reference_point_attribute(meta, y=ref_y, x=ref_x)
-    meta['REF_LAT'] = ref_meta['REF_LAT']
-    meta['REF_LON'] = ref_meta['REF_LON']
-    meta['REF_Y'] = ref_meta['REF_Y']
-    meta['REF_X'] = ref_meta['REF_X']
+    meta.update(ref_meta)
+    meta["FILE_TYPE"] = "timeseries"
+    meta["UNIT"] = "m"
 
-    # loop through and create files for each correction layer and mask layer
-    all_outputs = []
-    mask_layers = ['connected_component_labels', 'temporal_coherence', \
-                   'interferometric_correlation']
+    def calculate_cumulative_displacement(date, water_mask, mask_dict, reflyr_name):
+        """Calculate cumulative displacement up to given date using shortest path"""
+        if date == date_list[0]:
+            return np.zeros((rows, cols), dtype=np.float32)
+        
+        # Find shortest path from first date to current date
+        try:
+            path = nx.shortest_path(G, source=date_list[0], target=date)	# Finding all paths (files) in the shortest path from the first date to given date
+        except nx.NetworkXNoPath:
+            print(f"Warning: No path found to date {date}")
+            return None
 
-    correction_layers = []
-    if corr_lyrs is True:
-        correction_layers = ['tropospheric_delay', 'ionospheric_delay', \
-                             'solid_earth_tide', 'plate_motion']
+        # Calculate cumulative displacement along the path
+        cumulative = np.zeros((rows, cols), dtype=np.float32)
+        print(f'\ndate for calculating cumulative displacement: {date}')
+        print(f'shortest path from {date_list[0]} to {date}')
+        for i in range(len(path)-1):
+            ref_date, sec_date = path[i], path[i+1]
+            file = G[ref_date][sec_date]['file']	# File in the shortest path
+            print(f'{i} {ref_date} to {sec_date}: {file}')	
 
-    for lyr in mask_layers + correction_layers:
-        # get layer names and paths
-        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-        # if correction layer need to account for different path + conv factor
-        if lyr in correction_layers:
-            lyr_paths = \
-                [i.replace(disp_lyr_name, f'/corrections/{lyr}') \
-                 for i in unw_files]
-            # write layers to file
-            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
-                water_mask, date12_list, phase2range, ref_y, ref_x)
-        else:
-            lyr_paths = \
-                [i.replace(disp_lyr_name, lyr) for i in unw_files]
-            # write layers to file
-            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
-                water_mask, date12_list, 1)
+            # Read displacement data
+            data = load_gdal(file, masked=True)
+            
+            # Apply reference point correction
+            if ref_y is not None and ref_x is not None:
+                data -= np.nan_to_num(data[ref_y, ref_x])
+          
+            # mask by specified dict of thresholds 
+            for dict_key in mask_dict.keys():
+                mask_lyr = file.replace(reflyr_name, dict_key)
+                mask_thres = mask_dict[dict_key]
+                mask_data = load_gdal(mask_lyr)
+                data[mask_data == mask_thres] = np.nan
+ 
+            # Apply water mask
+            data = data * water_mask
+          
+            # Add to cumulative displacement
+            cumulative += data * phase2range
 
-        # record outputs
-        all_outputs.append(lyr_fname)
+        # convert nans to 0
+        # necessary to avoid errors with MintPy velocity fitting
+        return np.nan_to_num(cumulative)
+
+    # Write timeseries data
+    print(f"Writing data to HDF5 file {outfile}")
+    writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
 
     # set dictionary that will be used to mask TS by specified thresholds
     mask_dict = {}
     mask_dict['connected_component_labels'] = 0
     mask_dict['temporal_coherence'] = 0.5
-    mask_dict['interferometric_correlation'] = 0.3
+    mask_dict[sp_coh_lyr_name] = 0.3
 
-    # write TS containing displacement layers to file
-    save_stack(outfile, ds_name_dict, meta, unw_files,
-        water_mask, date12_list, phase2range, ref_y, ref_x, unw_file=True,
-        mask_dict=mask_dict)
-    # record output
-    all_outputs.append(outfile)
+    reflyr_name = unw_files[0].split(':')[-1]
+    
+    with h5py.File(outfile, "a") as f:
+        prog_bar = ptime.progressBar(maxValue=num_date)
+        
+        # First date is always zero
+        f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
+        
+        # Calculate cumulative displacement for each date
+        for i, date in enumerate(date_list[1:], start=1):
+            displacement = calculate_cumulative_displacement(date, water_mask, mask_dict, reflyr_name)
+            if displacement is not None:
+                f["timeseries"][i] = displacement	# writing timeseries to the date
+            prog_bar.update(i, suffix=date)
+        
+        prog_bar.close()
 
-    # save short wavelength layers to file
-    if shortwvl_lyrs is True:
-        if track_version >= 0.4:
-            shortwvl_lyr = 'short_wavelength_displacement'
-            # get correction layers
-            shortwvl_fname = os.path.join(os.path.dirname(outfile),
-                f'{shortwvl_lyr}.h5')
-            shortwvl_files = \
-                [i.replace(disp_lyr_name, shortwvl_lyr) \
-                 for i in unw_files]
+    print("finished writing to HDF5 file: {}".format(outfile))
+    
+    # Handle additional layers (correction layers, mask layers, etc.)
+    all_outputs = [outfile]
+    mask_layers = ['connected_component_labels', 'temporal_coherence',
+                  sp_coh_lyr_name]
 
-            # write layers to file
-            save_stack(shortwvl_fname, ds_name_dict, meta,
-                shortwvl_files, water_mask, date12_list, phase2range,
-                ref_y, ref_x)
+    correction_layers = []
+    if corr_lyrs is True:
+        correction_layers = ['tropospheric_delay', 'ionospheric_delay',
+                           'solid_earth_tide']
 
-            # record output
-            all_outputs.append(shortwvl_fname)
+    # Process additional layers similarly to main displacement
+    for lyr in mask_layers + correction_layers:
+        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+        if lyr in correction_layers:
+            lyr_paths = [i.replace(disp_lyr_name, f'/corrections/{lyr}')
+                        for i in unw_files]
+            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
+                      water_mask, date12_list, phase2range, ref_y, ref_x)
+        else:
+            lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
+            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
+                      water_mask, date12_list, 1)
+        all_outputs.append(lyr_fname)
+
+    # Handle short wavelength layers
+    if shortwvl_lyrs is True and track_version >= 0.4:
+        shortwvl_lyr = 'short_wavelength_displacement'
+        shortwvl_fname = os.path.join(os.path.dirname(outfile),
+            f'{shortwvl_lyr}.h5')
+        shortwvl_files = [i.replace(disp_lyr_name, shortwvl_lyr)
+                         for i in unw_files]
+        save_stack(shortwvl_fname, ds_name_dict, meta,
+            shortwvl_files, water_mask, date12_list, phase2range,
+            ref_y, ref_x)
+        all_outputs.append(shortwvl_fname)
 
     return all_outputs, ref_meta
-
 
 def mintpy_prepare_geometry(outfile, geom_dir, metadata,
                             water_mask_file=None):
@@ -786,12 +831,16 @@ def prepare_stack(
     # >=v0.4 increment in units of m, must be converted to phs
     if track_version >= 0.4:
         conv_factor = -1 * (4.0 * np.pi) / float(metadata["WAVELENGTH"])
+    if track_version >= 0.7:
+       sp_coh_lyr_name = 'estimated_spatial_coherence'
+    else:
+       sp_coh_lyr_name = 'interferoemetric_correlation'    
 
     print(f"number of unwrapped interferograms: {num_pair}")
 
     # get list of interferometric correlation layers
     cor_files = \
-        [i.replace(disp_lyr_name, 'interferometric_correlation') \
+        [i.replace(disp_lyr_name, sp_coh_lyr_name) \
          for i in unw_files]
     print(f"number of correlation files: {len(cor_files)}")
 
@@ -926,22 +975,22 @@ def prepare_stack(
                           'temporalCoherence', meta)
 
     # loop through and create files for temporal coherence
-    tempcoh_files = \
+    conn_files = \
             [i.replace(disp_lyr_name, 'connected_component_labels') \
              for i in unw_files]
-    tempcoh_fname = os.path.join(os.path.dirname(outfile),
+    conn_fname = os.path.join(os.path.dirname(outfile),
         'connectedComponent.h5')
-    prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
+    prepare_average_stack(conn_fname, conn_files, water_mask,
                           'connectedComponent', meta)
 
     # loop through and create files for temporal coherence
-    tempcoh_files = \
-            [i.replace(disp_lyr_name, 'interferometric_correlation') \
+    spcoh_files = \
+            [i.replace(disp_lyr_name, sp_coh_lyr_name) \
              for i in unw_files]
-    tempcoh_fname = os.path.join(os.path.dirname(outfile),
-        'interferometricCorrelation.h5')
-    prepare_average_stack(tempcoh_fname, tempcoh_files, water_mask,
-                          'interferometricCorrelation', meta)
+    spcoh_fname = os.path.join(os.path.dirname(outfile),
+        'estimatedSpatialCoherence.h5')
+    prepare_average_stack(spcoh_fname, spcoh_files, water_mask,
+                          'estimatedSpatialCoherence', meta)
 
     return
 
@@ -1107,18 +1156,17 @@ def main(iargs=None):
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
     all_outputs = [og_ts_file]
     ref_meta = None
-    if inps.single_reference:
-        # time-series (if inputs are all single-reference)
-        all_outputs, ref_meta = prepare_timeseries(
-            outfile=og_ts_file,
-            unw_files=unw_files,
-            track_version=track_version,
-            metadata=meta,
-            water_mask_file=inps.water_mask_file,
-            ref_lalo=inps.ref_lalo,
-            corr_lyrs=inps.corr_lyrs,
-            shortwvl_lyrs=inps.shortwvl_lyrs,
-        )
+    # time-series (if inputs are multi-reference and outputs are for single-reference)
+    all_outputs, ref_meta = prepare_timeseries(
+        outfile=og_ts_file,
+        unw_files=unw_files,
+        track_version=track_version,
+        metadata=meta,
+        water_mask_file=inps.water_mask_file,
+        ref_lalo=inps.ref_lalo,
+        corr_lyrs=inps.corr_lyrs,
+        shortwvl_lyrs=inps.shortwvl_lyrs,
+    )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
                             water_mask_file=inps.water_mask_file)
@@ -1199,13 +1247,13 @@ def main(iargs=None):
 
     # update metadata field
     meta["DATA_TYPE"] = 'float32'
-    meta["DATE12"] = date12_list[-1]
+    meta["DATE12"] =  date12_list[0].split('_')[0] + '_' + date12_list[-1].split('_')[-1]
     meta["FILE_PATH"] = og_ts_file
     meta["FILE_TYPE"] = 'velocity'
     meta["NO_DATA_VALUE"] = 'none'
     meta["PROCESSOR"] = 'dolphin'
-    meta["REF_DATE"] = date12_list[-1].split('_')[0]
-    meta["START_DATE"] = date12_list[-1].split('_')[0]
+    meta["REF_DATE"] = date12_list[0].split('_')[0]
+    meta["START_DATE"] = date12_list[0].split('_')[0]
     meta["END_DATE"] = date12_list[-1].split('_')[-1]
     meta["UNIT"] = 'm/year'
     # apply reference point to velocity file
