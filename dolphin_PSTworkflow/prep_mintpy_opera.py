@@ -517,10 +517,12 @@ def prepare_timeseries(
     shortwvl_lyrs=False,
 ):
     """
-    Prepare the timeseries file accounting for different reference dates in input files.
+    Prepare the timeseries file accounting for different reference dates
+    in input files.
     
-    The function now handles cases where input files might have different reference dates,
-    calculating cumulative displacement by properly chaining measurements based on their date pairs.
+    The function now handles cases where input files might have different
+    reference dates, calculating cumulative displacement by properly chaining
+    measurements based on their date pairs.
     """
     print("-" * 50)
     print("preparing timeseries file: {}".format(outfile))
@@ -538,7 +540,7 @@ def prepare_timeseries(
     if track_version >= 0.7:
        sp_coh_lyr_name = 'estimated_spatial_coherence'
     else:
-       sp_coh_lyr_name = 'interferoemetric_correlation'
+       sp_coh_lyr_name = 'interferometric_correlation'
 
     # grab date list from the filename
     date12_list = _get_date_pairs(unw_files)
@@ -601,14 +603,20 @@ def prepare_timeseries(
     meta["FILE_TYPE"] = "timeseries"
     meta["UNIT"] = "m"
 
-    def calculate_cumulative_displacement(date, water_mask, mask_dict, reflyr_name):
-        """Calculate cumulative displacement up to given date using shortest path"""
+    def calculate_cumulative_displacement(
+        date, water_mask, mask_dict, reflyr_name
+    ):
+        """
+        Calculate cumulative displacement up to given date using shortest path
+        """
         if date == date_list[0]:
             return np.zeros((rows, cols), dtype=np.float32)
         
         # Find shortest path from first date to current date
         try:
-            path = nx.shortest_path(G, source=date_list[0], target=date)	# Finding all paths (files) in the shortest path from the first date to given date
+            # Finding all paths (files) in the shortest path from
+            # the first date to given date
+            path = nx.shortest_path(G, source=date_list[0], target=date)
         except nx.NetworkXNoPath:
             print(f"Warning: No path found to date {date}")
             return None
@@ -666,9 +674,11 @@ def prepare_timeseries(
         
         # Calculate cumulative displacement for each date
         for i, date in enumerate(date_list[1:], start=1):
-            displacement = calculate_cumulative_displacement(date, water_mask, mask_dict, reflyr_name)
+            displacement = calculate_cumulative_displacement(
+                date, water_mask, mask_dict, reflyr_name)
             if displacement is not None:
-                f["timeseries"][i] = displacement	# writing timeseries to the date
+                # writing timeseries to the date
+                f["timeseries"][i] = displacement
             prog_bar.update(i, suffix=date)
         
         prog_bar.close()
@@ -834,7 +844,7 @@ def prepare_stack(
     if track_version >= 0.7:
        sp_coh_lyr_name = 'estimated_spatial_coherence'
     else:
-       sp_coh_lyr_name = 'interferoemetric_correlation'    
+       sp_coh_lyr_name = 'interferometric_correlation'    
 
     print(f"number of unwrapped interferograms: {num_pair}")
 
@@ -1246,15 +1256,17 @@ def main(iargs=None):
     os.remove(dolphin_ref_tif)
 
     # update metadata field
+    start_date = date12_list[0].split('_')[0]
+    end_date = date12_list[-1].split('_')[-1]
     meta["DATA_TYPE"] = 'float32'
-    meta["DATE12"] =  date12_list[0].split('_')[0] + '_' + date12_list[-1].split('_')[-1]
+    meta["DATE12"] =  start_date + '_' + end_date
     meta["FILE_PATH"] = og_ts_file
     meta["FILE_TYPE"] = 'velocity'
     meta["NO_DATA_VALUE"] = 'none'
     meta["PROCESSOR"] = 'dolphin'
-    meta["REF_DATE"] = date12_list[0].split('_')[0]
-    meta["START_DATE"] = date12_list[0].split('_')[0]
-    meta["END_DATE"] = date12_list[-1].split('_')[-1]
+    meta["REF_DATE"] = start_date
+    meta["START_DATE"] = start_date
+    meta["END_DATE"] = end_date
     meta["UNIT"] = 'm/year'
     # apply reference point to velocity file
     if ref_meta is not None:
