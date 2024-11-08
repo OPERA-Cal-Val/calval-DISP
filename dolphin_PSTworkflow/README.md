@@ -54,7 +54,10 @@ conda activate calval_disp
 mamba env update --file calval-DISP/dolphin_PSTworkflow/extra_dependencies.yml --name calval_disp
 
 # add repo tools to your path
-export PATH=${PATH}:/u/data-drive/username/calval-DISP/dolphin_PSTworkflow"
+export PATH="${PATH}:/u/data-drive/username/calval-DISP"
+
+# set cap to circumvent potential dolphin crash
+export XLA_PYTHON_CLIENT_MEM_FRACTION=".10"
 ```
 
 ### Install development version of dolphin
@@ -78,7 +81,7 @@ export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
 ### Set PYTHONPATH
 ```.bash
 # set paths to prerequisite tools
-export PYTHONPATH"${PYTHONPATH}:/u/data-drive/username/calval-DISP"
+export PYTHONPATH="${PYTHONPATH}:/u/data-drive/username/calval-DISP"
 cd ../
 ```
 

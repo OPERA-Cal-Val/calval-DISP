@@ -23,7 +23,7 @@ from pyproj import CRS, Proj, Transformer
 from matplotlib.backends.backend_pdf import PdfPages
 
 # Add the src directory to sys.path
-sys.path.append(str(Path(__file__).parent / 'src'))
+sys.path.append(str(Path(__file__).resolve().parents[1] / 'src'))
 
 from pst_dolphin_utils import create_external_files, get_raster_bounds, \
     get_raster_crs

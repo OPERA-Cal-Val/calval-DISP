@@ -27,7 +27,7 @@ from rasterio.warp import reproject, Resampling
 from tqdm import tqdm
 
 # Add the src directory to sys.path
-sys.path.append(str(Path(__file__).parent / 'src'))
+sys.path.append(str(Path(__file__).resolve().parents[1] / 'src'))
 
 # Local application/library-specific imports
 from dem_stitcher.stitcher import stitch_dem

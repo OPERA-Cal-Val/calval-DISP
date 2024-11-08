@@ -26,7 +26,7 @@ import zipfile
 import json
 
 # Add the src directory to sys.path
-sys.path.append(str(Path(__file__).parent / 'src'))
+sys.path.append(str(Path(__file__).resolve().parents[1] / 'src'))
 
 # Local application/library specific imports
 from dolphin.io import get_raster_bounds, get_raster_crs
