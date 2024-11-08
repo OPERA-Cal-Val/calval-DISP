@@ -55,6 +55,7 @@ mamba env update --file calval-DISP/dolphin_PSTworkflow/extra_dependencies.yml -
 
 # add repo tools to your path
 export PATH="${PATH}:/u/data-drive/username/calval-DISP"
+export PATH="${PATH}:/u/data-drive/username/calval-DISP/dolphin_PSTworkflow"
 
 # set cap to circumvent potential dolphin crash
 export XLA_PYTHON_CLIENT_MEM_FRACTION=".10"
