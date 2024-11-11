@@ -38,4 +38,5 @@ dependencies:
   - xarray
   # Pip dependencies
   - pip:
-    - imgkit  # Package to be installed with pip
+    - hectorp
+    - imgkit
