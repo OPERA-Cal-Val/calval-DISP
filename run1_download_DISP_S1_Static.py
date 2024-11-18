@@ -20,13 +20,15 @@ from io import BytesIO
 import zipfile
 
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.filterwarnings("ignore")
 
 def createParser(iargs = None):
     '''Commandline input parser'''
     parser = argparse.ArgumentParser(description='Downloading OPERA DISP-S1 from AWS S3 bucket and static layer files from ASF')
     parser.add_argument("--frameID", 
                         required=True, type=str, help='frameID of DISP-S1 to download (e.g., 33039)')
+    parser.add_argument("--version",
+                        default=0.8, type=float, help='version of DISP-S1 (default: 0.8)') 
     parser.add_argument("--dispDir",
                         default='outputs', type=str, help='directory to download DISP-S1 (default: outputs)')
     parser.add_argument("--startDate", 
@@ -50,20 +52,18 @@ def download_file(bucket_name, file_key, local_path):
     else:
         print(f'{local_path} already exists')
     
-def list_s3_directories(bucket_name, directory_name, keyword=None):
+def list_s3_directories(bucket_name, directory_name, keyword1=None, keyword2=None):
     ''' listing directories in bucket '''
     s3 = boto3.client('s3', config=botocore.client.Config(signature_version=botocore.UNSIGNED))
     paginator = s3.get_paginator('list_objects_v2')
     prefix = directory_name if directory_name.endswith('/') else directory_name + '/'
-    
     directories = set()
-    
     for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, Delimiter='/'):
         for prefix in page.get('CommonPrefixes', []):
             dir_name = prefix['Prefix']
-            if keyword is None or keyword.lower() in dir_name.lower():
+            if (keyword1 is None or keyword1.lower() in dir_name.lower()) and \
+               (keyword2 is None or keyword2.lower() in dir_name.lower()):
                 directories.add(dir_name)
-    
     return sorted(directories)
 
 def get_key(s):
@@ -89,7 +89,8 @@ def filter_list_by_date_range(list_, start_date, end_date):
 
 def main(inps):
     frameID = inps.frameID
-    frameID = frameID.zfill(5)	# force frameID to have 5 digit number as string 
+    frameID = frameID.zfill(5)	# force frameID to have 5 digit number as string
+    version = inps.version 
     dispDir = inps.dispDir
     os.makedirs(dispDir, exist_ok='True')
     startDate = inps.startDate
@@ -106,8 +107,10 @@ def main(inps):
     print('S3 bucket name: ', bucket_name)
     print('DISP_S1 directory name in bucket: ', directory_name)
 
-    keyword = 'F' + frameID
-    subdirectories = list_s3_directories(bucket_name, directory_name, keyword)  # search by frame ID
+    keyword1 = 'F' + frameID
+    keyword2 = '_v' + str(version)
+
+    subdirectories = list_s3_directories(bucket_name, directory_name, keyword1=keyword1, keyword2=keyword2)  # search by frame ID
     list_disp = [ dir.split('/')[-2] for dir in subdirectories]
     list_disp = sorted(list_disp)
 
