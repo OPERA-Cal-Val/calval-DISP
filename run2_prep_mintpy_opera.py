@@ -1017,7 +1017,9 @@ def main(iargs=None):
 
     unw_files = sorted(
         glob.glob(inps.unw_file_glob),
-        key=lambda x: datetime.datetime.strptime(x.split('_')[-3][:8], '%Y%m%d')
+        key=lambda x: datetime.datetime.strptime(
+            x.split('_')[-3][:8], '%Y%m%d'
+        )
     )
 
     # filter input by specified dates
