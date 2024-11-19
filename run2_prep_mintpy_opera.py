@@ -531,16 +531,17 @@ def prepare_timeseries(
     meta = {key: value for key, value in metadata.items()}
 
     # pass lyr to disp conversion factor, which depends on the product version
+    sp_coh_lyr_name = 'interferometric_correlation'
     if track_version == 0.3:
         disp_lyr_name = 'unwrapped_phase'
         phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
     if track_version >= 0.4:
         disp_lyr_name = 'displacement'
         phase2range = 1
-    if track_version >= 0.7:
+    if track_version == 0.7:
        sp_coh_lyr_name = 'estimated_spatial_coherence'
-    else:
-       sp_coh_lyr_name = 'interferometric_correlation'
+    if track_version == 0.8:
+       sp_coh_lyr_name = 'estimated_phase_quality'
 
     # grab date list from the filename
     date12_list = _get_date_pairs(unw_files)
@@ -642,7 +643,7 @@ def prepare_timeseries(
                 mask_lyr = file.replace(reflyr_name, dict_key)
                 mask_thres = mask_dict[dict_key]
                 mask_data = load_gdal(mask_lyr)
-                data[mask_data == mask_thres] = np.nan
+                data[mask_data < mask_thres] = np.nan
  
             # Apply water mask
             data = data * water_mask
@@ -660,9 +661,11 @@ def prepare_timeseries(
 
     # set dictionary that will be used to mask TS by specified thresholds
     mask_dict = {}
-    mask_dict['connected_component_labels'] = 0
-    mask_dict['temporal_coherence'] = 0.5
-    mask_dict[sp_coh_lyr_name] = 0.3
+    mask_dict['connected_component_labels'] = 1
+    mask_dict['temporal_coherence'] = 0.6
+    mask_dict[sp_coh_lyr_name] = 0.5
+    if track_version == 0.8:
+        mask_dict['water_mask'] = 1
 
     reflyr_name = unw_files[0].split(':')[-1]
     
@@ -839,12 +842,13 @@ def prepare_stack(
 
     conv_factor = 1
     # >=v0.4 increment in units of m, must be converted to phs
+    sp_coh_lyr_name = 'interferometric_correlation'
     if track_version >= 0.4:
         conv_factor = -1 * (4.0 * np.pi) / float(metadata["WAVELENGTH"])
-    if track_version >= 0.7:
+    if track_version == 0.7:
        sp_coh_lyr_name = 'estimated_spatial_coherence'
-    else:
-       sp_coh_lyr_name = 'interferometric_correlation'    
+    if track_version == 0.8:
+       sp_coh_lyr_name = 'estimated_phase_quality'
 
     print(f"number of unwrapped interferograms: {num_pair}")
 
