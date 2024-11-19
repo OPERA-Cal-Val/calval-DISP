@@ -695,8 +695,10 @@ def prepare_timeseries(
 
     correction_layers = []
     if corr_lyrs is True:
-        correction_layers = ['tropospheric_delay', 'ionospheric_delay',
+        correction_layers = ['ionospheric_delay',
                            'solid_earth_tide']
+        if track_version < 0.8:
+            correction_layers.append('tropospheric_delay')
 
     # Process additional layers similarly to main displacement
     for lyr in mask_layers + correction_layers:
