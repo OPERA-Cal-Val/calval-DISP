@@ -629,6 +629,10 @@ def prepare_timeseries(
         for i in range(len(path)-1):
             ref_date, sec_date = path[i], path[i+1]
             file = G[ref_date][sec_date]['file']	# File in the shortest path
+            # Get reference input file layername
+            inpt_lyrname = file.split(':')[-1]
+            if inpt_lyrname != reflyr_name:
+                file = file.replace(inpt_lyrname, reflyr_name)
             print(f'{i} {ref_date} to {sec_date}: {file}')	
 
             # Read displacement data
@@ -655,10 +659,6 @@ def prepare_timeseries(
         # necessary to avoid errors with MintPy velocity fitting
         return np.nan_to_num(cumulative)
 
-    # Write timeseries data
-    print(f"Writing data to HDF5 file {outfile}")
-    writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
-
     # set dictionary that will be used to mask TS by specified thresholds
     mask_dict = {}
     mask_dict['connected_component_labels'] = 1
@@ -666,33 +666,9 @@ def prepare_timeseries(
     mask_dict[sp_coh_lyr_name] = 0.5
     if track_version == 0.8:
         mask_dict['water_mask'] = 1
-
-    reflyr_name = unw_files[0].split(':')[-1]
     
-    with h5py.File(outfile, "a") as f:
-        prog_bar = ptime.progressBar(maxValue=num_date)
-        
-        # First date is always zero
-        f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
-        
-        # Calculate cumulative displacement for each date
-        for i, date in enumerate(date_list[1:], start=1):
-            displacement = calculate_cumulative_displacement(
-                date, water_mask, mask_dict, reflyr_name)
-            if displacement is not None:
-                # writing timeseries to the date
-                f["timeseries"][i] = displacement
-            prog_bar.update(i, suffix=date)
-        
-        prog_bar.close()
-
-    print("finished writing to HDF5 file: {}".format(outfile))
-    
-    # Handle additional layers (correction layers, mask layers, etc.)
+    # loop through and write TS displacement and correction layers
     all_outputs = [outfile]
-    mask_layers = ['connected_component_labels', 'temporal_coherence',
-                  sp_coh_lyr_name]
-
     correction_layers = []
     if corr_lyrs is True:
         correction_layers = ['ionospheric_delay',
@@ -700,31 +676,59 @@ def prepare_timeseries(
         if track_version < 0.8:
             correction_layers.append('tropospheric_delay')
 
-    # Process additional layers similarly to main displacement
-    for lyr in mask_layers + correction_layers:
-        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-        if lyr in correction_layers:
-            lyr_paths = [i.replace(disp_lyr_name, f'/corrections/{lyr}')
-                        for i in unw_files]
-            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
-                      water_mask, date12_list, phase2range, ref_y, ref_x)
-        else:
-            lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
-            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
-                      water_mask, date12_list, 1)
-        all_outputs.append(lyr_fname)
-
     # Handle short wavelength layers
+    shortwvl_layer = []
     if shortwvl_lyrs is True and track_version >= 0.4:
-        shortwvl_lyr = 'short_wavelength_displacement'
-        shortwvl_fname = os.path.join(os.path.dirname(outfile),
-            f'{shortwvl_lyr}.h5')
-        shortwvl_files = [i.replace(disp_lyr_name, shortwvl_lyr)
-                         for i in unw_files]
-        save_stack(shortwvl_fname, ds_name_dict, meta,
-            shortwvl_files, water_mask, date12_list, phase2range,
-            ref_y, ref_x)
-        all_outputs.append(shortwvl_fname)
+        shortwvl_layer = ['short_wavelength_displacement']
+
+    for ind, lyr in enumerate(
+        [disp_lyr_name] + correction_layers + shortwvl_layer
+    ):
+        # manually set TS output filename if not correction layer
+        if ind == 0:
+            lyr_fname = all_outputs[0]
+            lyr_path = f'{disp_lyr_name}'
+        else:
+            lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+            if lyr in correction_layers:
+                lyr_path = f'/corrections/{lyr}'
+            if lyr in shortwvl_layer:
+                lyr_path = f'{lyr}'
+            all_outputs.append(lyr_fname)
+
+        # Write timeseries data
+        print(f"Writing data to HDF5 file {lyr_fname}")
+        writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
+        print('lyr_path', lyr_path)
+
+        with h5py.File(lyr_fname, "a") as f:
+            prog_bar = ptime.progressBar(maxValue=num_date)
+            # First date is always zero
+            f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
+            # Calculate cumulative displacement for each date
+            for i, date in enumerate(date_list[1:], start=1):
+                displacement = calculate_cumulative_displacement(
+                    date, water_mask, mask_dict, lyr_path)
+                if displacement is not None:
+                    # writing timeseries to the date
+                    f["timeseries"][i] = displacement
+                prog_bar.update(i, suffix=date)
+        
+            prog_bar.close()
+
+    print("finished writing to HDF5 file: {}".format(outfile))
+    
+    # Handle additional layers (correction layers, mask layers, etc.)
+    mask_layers = ['connected_component_labels', 'temporal_coherence',
+                  sp_coh_lyr_name]
+
+    # Write mask and correlation layers to file
+    for lyr in mask_layers:
+        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+        lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
+        save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
+                   water_mask, date12_list, 1)
+        all_outputs.append(lyr_fname)
 
     return all_outputs, ref_meta
 

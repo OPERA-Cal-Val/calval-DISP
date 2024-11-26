@@ -25,6 +25,7 @@ from osgeo import gdal
 from rasterio import CRS
 from rasterio.warp import reproject, Resampling
 from tqdm import tqdm
+import networkx as nx
 
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).resolve().parents[1] / 'src'))
@@ -523,18 +524,24 @@ def prepare_timeseries(
     num_file = len(unw_files)
     print("number of unwrapped interferograms: {}".format(num_file))
 
+    # Create a directed graph to represent date connections
+    G = nx.DiGraph()
+
+    # Add edges (measurements) to the graph
     date_pairs = [dl.split("_") for dl in date12_list]
+    for (ref_date, sec_date), file in zip(date_pairs, unw_files):
+        G.add_edge(ref_date, sec_date, file=file)
+
+    # Get all unique dates
     date_list = sorted(set(itertools.chain.from_iterable(date_pairs)))
-    # ref_date = date12_list[0].split("_")[0]
-    # date_list = [ref_date] + [date12.split("_")[1] for date12 in date12_list]
     num_date = len(date_list)
     print("number of acquisitions: {}\n{}".format(num_date, date_list))
 
-    # baseline info
-    pbase = np.zeros(num_date, dtype=np.float32)
-
     # size info
     cols, rows = get_raster_xysize(unw_files[0])
+
+    # baseline info
+    pbase = np.zeros(num_date, dtype=np.float32)
 
     # define dataset structure
     dates = np.array(date_list, dtype=np.string_)
@@ -551,20 +558,12 @@ def prepare_timeseries(
     else:
         water_mask = np.ones((rows, cols), dtype=np.float32)
 
-    # initiate file attributes
-    meta["FILE_TYPE"] = "timeseries"
-    meta["UNIT"] = "m"
-    # meta["REF_DATE"] = ref_date # might not be the first date!
-    ##################################################
-    # pass reference point
-    # if not specified, chose reference point from max value in coherence file
+    # handle reference point
     coord = ut.coordinate(meta)
     if ref_lalo is not None:
         ref_lat, ref_lon = ref_lalo.split()
-        # get value at coordinate
-        (ref_y,
-         ref_x) = coord.geo2radar(np.array(float(ref_lat)),
-                                  np.array(float(ref_lon)))[0:2]
+        ref_y, ref_x = coord.geo2radar(np.array(float(ref_lat)),
+                                     np.array(float(ref_lon)))[0:2]
     else:
         coh_file = os.path.join(os.path.dirname(outfile), 'avgSpatialCoh.h5')
         coh = readfile.read(coh_file)[0]
@@ -575,12 +574,94 @@ def prepare_timeseries(
         ref_y, ref_x = np.unravel_index(np.argmax(coh), coh.shape)
         del coh
 
-    # update metadata to reflect reference point
+    # update metadata
     ref_meta = reference_point_attribute(meta, y=ref_y, x=ref_x)
+    meta.update(ref_meta)
+    meta["FILE_TYPE"] = "timeseries"
+    meta["UNIT"] = "m"
     meta['REF_LAT'] = ref_meta['REF_LAT']
     meta['REF_LON'] = ref_meta['REF_LON']
     meta['REF_Y'] = ref_meta['REF_Y']
     meta['REF_X'] = ref_meta['REF_X']
+
+    ########
+    def calculate_cumulative_displacement(
+        date, water_mask, mask_dict, reflyr_name
+    ):
+        """
+        Calculate cumulative displacement up to given date using shortest path
+        """
+        if date == date_list[0]:
+            return np.zeros((rows, cols), dtype=np.float32)
+        
+        # Find shortest path from first date to current date
+        try:
+            # Finding all paths (files) in the shortest path from
+            # the first date to given date
+            path = nx.shortest_path(G, source=date_list[0], target=date)
+        except nx.NetworkXNoPath:
+            print(f"Warning: No path found to date {date}")
+            return None
+
+        # Calculate cumulative displacement along the path
+        cumulative = np.zeros((rows, cols), dtype=np.float32)
+        print(f'\ndate for calculating cumulative displacement: {date}')
+        print(f'shortest path from {date_list[0]} to {date}')
+        for i in range(len(path)-1):
+            ref_date, sec_date = path[i], path[i+1]
+            file = G[ref_date][sec_date]['file']	# File in the shortest path
+            print(f'{i} {ref_date} to {sec_date}: {file}')	
+
+            # Read displacement data
+            data = load_gdal(file, masked=True)
+            
+            # Apply reference point correction
+            if ref_y is not None and ref_x is not None:
+                data -= np.nan_to_num(data[ref_y, ref_x])
+          
+            # mask by specified dict of thresholds 
+            for dict_key in mask_dict.keys():
+                mask_lyr = file.replace(reflyr_name, dict_key)
+                mask_thres = mask_dict[dict_key]
+                mask_data = load_gdal(mask_lyr)
+                data[mask_data < mask_thres] = np.nan
+ 
+            # Apply water mask
+            data = data * water_mask
+          
+            # Add to cumulative displacement
+            cumulative += data * phase2range
+
+        # convert nans to 0
+        # necessary to avoid errors with MintPy velocity fitting
+        return np.nan_to_num(cumulative)
+
+    # set dictionary that will be used to mask TS by specified thresholds
+    mask_dict = {}
+    mask_dict['.unw.conncomp.tif'] = 1
+    mask_dict['.int.cor.tif'] = 0.6
+
+    print(f"Writing data to HDF5 file {outfile}")
+    writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
+
+    with h5py.File(outfile, "a") as f:
+        prog_bar = ptime.progressBar(maxValue=num_date)
+        # First date is always zero
+        f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
+        # Calculate cumulative displacement for each date
+        for i, date in enumerate(date_list[1:], start=1):
+            displacement = calculate_cumulative_displacement(
+                date, water_mask, mask_dict, '.unw.tif')
+            if displacement is not None:
+                # writing timeseries to the date
+                f["timeseries"][i] = displacement
+            prog_bar.update(i, suffix=date)
+        
+        prog_bar.close()
+
+    all_outputs = [outfile]
+
+    ########
 
     # loop through and create files for each correction layer and mask layer
     all_outputs = []
@@ -588,7 +669,6 @@ def prepare_timeseries(
     mask_layers['connected_component_labels'] = '.unw.conncomp.tif'
     mask_layers['interferometric_correlation'] = '.int.cor.tif'
     
-
     for lyr, ext in mask_layers.items():
         # get layer names and paths
         lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
@@ -601,18 +681,6 @@ def prepare_timeseries(
 
         # record outputs
         all_outputs.append(lyr_fname)
-
-    # set dictionary that will be used to mask TS by specified thresholds
-    mask_dict = {}
-    mask_dict['.unw.conncomp.tif'] = 0
-    mask_dict['.int.cor.tif'] = 0.3
-
-    # write TS containing displacement layers to file
-    save_stack(outfile, ds_name_dict, meta, unw_files,
-        water_mask, date12_list, phase2range, ref_y, ref_x, unw_file=True,
-        mask_dict=mask_dict)
-    # record output
-    all_outputs.append(outfile)
 
     return all_outputs, ref_meta
 
@@ -824,14 +892,20 @@ def main(iargs=None):
 
     unw_files = sorted(
         glob.glob(inps.unw_file_glob),
-        key=lambda x: x.split('_')[1][:8]
+        key=lambda x: datetime.datetime.strptime(
+            x.split('_')[-1][:8], '%Y%m%d'
+        )
     )
     print(f"Found {len(unw_files)} unwrapped files")
+    print('unw_files', unw_files)
     cor_files = sorted(glob.glob(inps.cor_file_glob))
     cor_files = sorted(
         glob.glob(inps.cor_file_glob),
-        key=lambda x: x.split('_')[1][:8]
+        key=lambda x: datetime.datetime.strptime(
+            x.split('_')[-1][:8], '%Y%m%d'
+        )
     )
+    print('cor_files', cor_files)
     print(f"Found {len(cor_files)} correlation files")
 
     # filter input by specified dates
