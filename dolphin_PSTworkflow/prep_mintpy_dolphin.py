@@ -35,8 +35,7 @@ from dem_stitcher.stitcher import stitch_dem
 from mintpy.cli import (
     generate_mask,
     mask,
-    temporal_average,
-    timeseries2velocity
+    temporal_average
 )
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
@@ -76,7 +75,6 @@ EXAMPLE = """example:
       -u "pst_output/dolphin_output/stitched_interferograms/*.unw.zeroed.tif"
       --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
       --ref-lalo '19.2485991551617 -155.32285148610057'
-      --single-reference
       -o mintpy_output
 
 """  # noqa: E501
@@ -164,14 +162,6 @@ def _create_parser():
         help=(
             "number of looks in azimuth direction, for multilooking applied after"
             " fringe processing.\nOnly impacts metadata. (default: %(default)s)."
-        ),
-    )
-    parser.add_argument(
-        "--single-reference",
-        action="store_true",
-        help=(
-            "Indicate that all the unwrapped ifgs are single reference, which allows"
-            " use to create the timeseries.h5 file directly without inversion."
         ),
     )
     parser.add_argument(
@@ -584,7 +574,6 @@ def prepare_timeseries(
     meta['REF_Y'] = ref_meta['REF_Y']
     meta['REF_X'] = ref_meta['REF_X']
 
-    ########
     def calculate_cumulative_displacement(
         date, water_mask, mask_dict, reflyr_name
     ):
@@ -660,8 +649,6 @@ def prepare_timeseries(
         prog_bar.close()
 
     all_outputs = [outfile]
-
-    ########
 
     # loop through and create files for each correction layer and mask layer
     all_outputs = []
@@ -1044,15 +1031,13 @@ def main(iargs=None):
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
     all_outputs = [og_ts_file]
     ref_meta = None
-    if inps.single_reference:
-        # time-series (if inputs are all single-reference)
-        all_outputs, ref_meta = prepare_timeseries(
-            outfile=og_ts_file,
-            unw_files=unw_files,
-            metadata=meta,
-            water_mask_file=inps.water_mask_file,
-            ref_lalo=inps.ref_lalo,
-        )
+    all_outputs, ref_meta = prepare_timeseries(
+        outfile=og_ts_file,
+        unw_files=unw_files,
+        metadata=meta,
+        water_mask_file=inps.water_mask_file,
+        ref_lalo=inps.ref_lalo,
+    )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
                             water_mask_file=inps.water_mask_file)
