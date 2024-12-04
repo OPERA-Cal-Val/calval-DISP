@@ -219,12 +219,6 @@ def _create_parser():
         action="store_true",
         help="Extract short wavelength layers",
     )
-    parser.add_argument(
-        "--n-3",
-        dest="n_3_unw",
-        action="store_true",
-        help="Specify if n-3 network",
-    )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
 
@@ -520,7 +514,6 @@ def prepare_timeseries(
     ref_lalo=None,
     corr_lyrs=False,
     shortwvl_lyrs=False,
-    n_3_unw=False,
 ):
     """
     Prepare the timeseries file accounting for different reference dates
@@ -842,7 +835,6 @@ def prepare_stack(
     metadata,
     water_mask_file=None,
     ref_lalo=None,
-    n_3_unw=False,
 ):
     """Prepare the input unw stack."""
     print("-" * 50)
@@ -926,17 +918,6 @@ def prepare_stack(
 
     # initiate HDF5 file
     meta["FILE_TYPE"] = "ifgramStack"
-    if n_3_unw is True:
-        ref_lat, ref_lon = ref_lalo.split()
-        coord = ut.coordinate(meta)
-        ref_y, ref_x = coord.geo2radar(np.array(float(ref_lat)),
-                                     np.array(float(ref_lon)))[0:2]
-        ref_meta = reference_point_attribute(meta, y=ref_y, x=ref_x)
-        meta['REF_LAT'] = ref_meta['REF_LAT']
-        meta['REF_LON'] = ref_meta['REF_LON']
-        meta['REF_Y'] = ref_meta['REF_Y']
-        meta['REF_X'] = ref_meta['REF_X']
-
     writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
 
     # writing data to HDF5 file
@@ -949,8 +930,6 @@ def prepare_stack(
             # read/write *.unw file
             unw_arr = load_gdal(
                 unw_file, masked=True) * water_mask * conv_factor
-            if n_3_unw is True:
-                unw_arr -= np.nan_to_num(unw_arr[ref_y, ref_x])
             # mask
             unw_arr[unw_arr == 0] = np.nan
             f["unwrapPhase"][i] = unw_arr
@@ -1188,7 +1167,6 @@ def main(iargs=None):
         metadata=meta,
         water_mask_file=inps.water_mask_file,
         ref_lalo=inps.ref_lalo,
-        n_3_unw=inps.n_3_unw,
     )
 
     # prepare TS file
@@ -1206,7 +1184,6 @@ def main(iargs=None):
         ref_lalo=inps.ref_lalo,
         corr_lyrs=inps.corr_lyrs,
         shortwvl_lyrs=inps.shortwvl_lyrs,
-        n_3_unw=inps.n_3_unw,
     )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
