@@ -103,6 +103,9 @@ def subtract_rasters(raster1_path, raster2_path):
                 np.isclose(data1, nodata_value) | np.isclose(data2, nodata_value)
             ] = nodata_value
 
+        # set nan to 0
+        result_data = np.nan_to_num(result_data, nan=0)
+
         return result_data, transform, nodata_value, src1.crs
 
 
@@ -163,6 +166,7 @@ def process_and_save(dir1, dir2, output_h5_path, wildcard="*.tif"):
     for raster1, raster2 in raster_pairs:
         result_data, transform, nodata_value, crs = subtract_rasters(raster1, raster2)
         date = os.path.basename(raster1).split("timeseries-")[-1][:8]
+        nodata_value = 0
         output_rasters.append((result_data, transform, nodata_value, crs, date))
 
     save_to_hdf5(output_rasters, output_h5_path)
