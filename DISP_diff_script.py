@@ -12,6 +12,9 @@ from mintpy.utils import writefile
 
 import argparse
 
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
 def parse_arguments():
     """
     Parse command-line arguments.
@@ -103,10 +106,16 @@ def subtract_rasters(raster1_path, raster2_path):
                 np.isclose(data1, nodata_value) | np.isclose(data2, nodata_value)
             ] = nodata_value
 
+        # get nanmean
+        nanmean_result = np.nanmean(result_data)
+
         # set nan to 0
         result_data = np.nan_to_num(result_data, nan=0)
 
-        return result_data, transform, nodata_value, src1.crs
+        # hardcode output nodata value
+        nodata_value = 0
+
+        return result_data, nanmean_result, transform, nodata_value, src1.crs
 
 
 def save_to_hdf5(output_rasters, output_h5_path):
@@ -122,8 +131,6 @@ def save_to_hdf5(output_rasters, output_h5_path):
                   geotransform[5], geotransform[3], geotransform[4])
     date_list = [i[4] for i in output_rasters]
     pbase = np.zeros(num_bands, dtype=np.float32)
-    print('geotransform', geotransform)
-    print('gdal_transform', gdal_transform)
     print('date_list', date_list)
     dates = np.array(date_list, dtype=np.string_)
 
@@ -163,20 +170,53 @@ def process_and_save(dir1, dir2, output_h5_path, wildcard="*.tif"):
     raster_pairs = match_files(dir1, dir2, wildcard=wildcard)
     output_rasters = []
 
+    nanmean_results = []
+    all_dates = []
     for raster1, raster2 in raster_pairs:
-        result_data, transform, nodata_value, crs = subtract_rasters(raster1, raster2)
+        result_data, nanmean_result, transform, nodata_value, crs = \
+            subtract_rasters(raster1, raster2)
         date = os.path.basename(raster1).split("timeseries-")[-1][:8]
-        nodata_value = 0
-        output_rasters.append((result_data, transform, nodata_value, crs, date))
+        output_rasters.append((result_data, transform,
+            nodata_value, crs, date))
+        nanmean_results.append(nanmean_result*1000) # to mm
+        all_dates.append(date)
+
+    # make plot of mean displacement with time
+    out_dir = os.path.dirname(output_h5_path)
+    output_plt_path = os.path.join(out_dir, 'dispvstime.png')
+    # create path if it does not exist
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    # Convert 'YYYYMMDD' to datetime objects
+    str_dates = [datetime.datetime.strptime(date, "%Y%m%d")
+        for date in all_dates]
+
+    # Create the plot
+    plt.figure(figsize=(8, 6))
+    plt.plot(str_dates, nanmean_results, marker='o',
+        linestyle='-', color='b', label='Data')
+
+    # Format the x-axis
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+    plt.xticks(rotation=45)
+
+    # Add labels, title, and legend
+    plt.xlabel("Date (YYYY-MM-DD)")
+    plt.ylabel("mm")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+
+    # Save the plot
+    plt.tight_layout()
+    plt.savefig(output_plt_path, dpi=300, bbox_inches='tight')
 
     save_to_hdf5(output_rasters, output_h5_path)
 
 
 # Example Usage
 if __name__ == "__main__":
-    #dir1 = "/u/duvel-d0/ssangha/DISP_work/v9/dolphin/F11116/extracted_DISP"
-    #dir2 = "/u/duvel-d0/ssangha/DISP_work/v9/dolphin/F11115/extracted_DISP"
-    #output_h5_path = "/u/duvel-d0/ssangha/DISP_work/v9/dolphin/F11116-F11115/DISP/diff_overlap.h5"
     args = parse_arguments()
 
     # Use the arguments
