@@ -663,7 +663,7 @@ def prepare_timeseries(
     mask_dict['connected_component_labels'] = 1
     mask_dict['temporal_coherence'] = 0.6
     mask_dict[sp_coh_lyr_name] = 0.5
-    if track_version == 0.8:
+    if track_version >= 0.8:
         mask_dict['water_mask'] = 1
     
     # loop through and write TS displacement and correction layers
@@ -719,7 +719,9 @@ def prepare_timeseries(
     
     # Handle additional layers (correction layers, mask layers, etc.)
     mask_layers = ['connected_component_labels', 'temporal_coherence',
-                  sp_coh_lyr_name, 'water_mask', 'recommended_mask']
+                  sp_coh_lyr_name]
+    if track_version >= 0.8:
+        mask_layers.extend(['water_mask', 'recommended_mask'])
 
     # Write mask and correlation layers to file
     for lyr in mask_layers:
