@@ -21,6 +21,7 @@ import h5py
 import numpy as np
 import pyproj
 from osgeo import gdal
+import rasterio
 from tqdm import tqdm
 import networkx as nx
 
@@ -767,6 +768,12 @@ def main(iargs=None):
                     output_file=height_file,
                     resample_alg="cubic",
                 )
+
+    # get median height for tropo estimate
+    with rasterio.open(height_file) as src:
+       height_arr = np.nan_to_num(src.read(1))
+       valid_mask = (height_arr != 0)
+       median_height = int(np.median(height_arr[valid_mask]))
 
     # check static layer naming convention
     allcaps_geometry = True

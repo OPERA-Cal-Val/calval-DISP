@@ -24,6 +24,7 @@ import networkx as nx
 
 from datetime import datetime as dt
 import random
+import rasterio
 import requests
 import asf_search as asf
 import matplotlib.pyplot as plt
@@ -1094,6 +1095,12 @@ def main(iargs=None):
                     output_file=height_file,
                     resample_alg="cubic",
                 )
+
+    # get median height for tropo estimate
+    with rasterio.open(height_file) as src:
+       height_arr = np.nan_to_num(src.read(1))
+       valid_mask = (height_arr != 0)
+       median_height = int(np.median(height_arr[valid_mask]))
 
     # check static layer naming convention
     allcaps_geometry = True
