@@ -1,4 +1,4 @@
-name: calval_disp
+name: test_calval_disp
 channels:
   - conda-forge
 dependencies:
@@ -16,6 +16,6 @@ dependencies:
   - rich
   - scikit-image
   - snaphu
-  - tile_mate
+  - tile_mate>=0.0.12
   - tophu
   - tqdm

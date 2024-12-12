@@ -65,7 +65,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=".10"
 ```.bash
 git clone https://github.com/isce-framework/dolphin.git
 cd dolphin
-mamba update --name calval_disp --file requirements.txt
+mamba env update --file conda-env.yml --name calval_disp
 python -m pip install .
 cd ../
 ```
@@ -73,10 +73,19 @@ cd ../
 ### Install development version of MintPy
 ```.bash
 git clone https://github.com/insarlab/MintPy.git
-mamba update --name calval_disp --file MintPy/requirements.txt
+mamba update --file MintPy/requirements.txt --name calval_disp
 export MINTPY_HOME=/u/data-drive/username/MintPy
 export PYTHONPATH=/u/data-drive/username/src
 export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
+```
+
+### Install development version of RAiDER
+```.bash
+git clone https://github.com/dbekaert/RAiDER.git
+cd RAiDER
+mamba env update --file environment.yml --name calval_disp
+python -m pip install -e .
+cd ../
 ```
 
 ### Set PYTHONPATH

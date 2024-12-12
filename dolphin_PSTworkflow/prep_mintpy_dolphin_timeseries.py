@@ -20,10 +20,7 @@ import affine
 import h5py
 import numpy as np
 import pyproj
-import rasterio
 from osgeo import gdal
-from rasterio import CRS
-from rasterio.warp import reproject, Resampling
 from tqdm import tqdm
 import networkx as nx
 
@@ -31,7 +28,6 @@ import networkx as nx
 sys.path.append(str(Path(__file__).resolve().parents[1] / 'src'))
 
 # Local application/library-specific imports
-from dem_stitcher.stitcher import stitch_dem
 from mintpy.cli import (
     generate_mask,
     mask,
@@ -60,7 +56,7 @@ from pst_dolphin_utils import (
     process_blocks,
     warp_to_match
 )
-from tile_mate import get_raster_from_tiles
+from pst_ts_utils import calculate_cumulative_displacement
 from tile_mate.stitcher import DATASET_SHORTNAMES
 
 OPERA_DATASET_ROOT = './'
@@ -189,6 +185,19 @@ def _create_parser():
         default='0.4',
         help="Specify minimum coherence of reference pixel "
              "for max-coherence method.",
+    )
+    parser.add_argument(
+        "--tropo-correction",
+        dest="tropo_correction",
+        action="store_true",
+        help="Apply tropospheric correction using HRRR weather model"
+    )
+    parser.add_argument(
+        "--work-dir",
+        dest="work_dir",
+        type=str,
+        default="./raider_intermediate_workdir",
+        help="Working directory for tropospheric correction intermediates"
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -483,6 +492,9 @@ def prepare_timeseries(
     metadata,
     water_mask_file=None,
     ref_lalo=None,
+    apply_tropo_correction=False,
+    median_height=50,
+    work_dir=None,
 ):
     """Prepare the timeseries file."""
     print("-" * 50)
@@ -494,6 +506,11 @@ def prepare_timeseries(
     # copy metadata to meta
     meta = {key: value for key, value in metadata.items()}
     phase2range = 1
+
+    if apply_tropo_correction and work_dir:
+        os.makedirs(work_dir, exist_ok=True)
+        os.makedirs(f'{work_dir}/orbits', exist_ok=True)
+        os.makedirs(f'weather_files', exist_ok=True)
 
     # grab date list from the filename
     date12_list = _get_date_pairs(unw_files)
@@ -560,63 +577,13 @@ def prepare_timeseries(
     meta['REF_Y'] = ref_meta['REF_Y']
     meta['REF_X'] = ref_meta['REF_X']
 
-    def calculate_cumulative_displacement(
-        date, water_mask, mask_dict, reflyr_name
-    ):
-        """
-        Calculate cumulative displacement up to given date using shortest path
-        """
-        if date == date_list[0]:
-            return np.zeros((rows, cols), dtype=np.float32)
-        
-        # Find shortest path from first date to current date
-        try:
-            # Finding all paths (files) in the shortest path from
-            # the first date to given date
-            path = nx.shortest_path(G, source=date_list[0], target=date)
-        except nx.NetworkXNoPath:
-            print(f"Warning: No path found to date {date}")
-            return None
-
-        # Calculate cumulative displacement along the path
-        cumulative = np.zeros((rows, cols), dtype=np.float32)
-        print(f'\ndate for calculating cumulative displacement: {date}')
-        print(f'shortest path from {date_list[0]} to {date}')
-        for i in range(len(path)-1):
-            ref_date, sec_date = path[i], path[i+1]
-            file = G[ref_date][sec_date]['file']	# File in the shortest path
-            print(f'{i} {ref_date} to {sec_date}: {file}')	
-
-            # Read displacement data
-            data = load_gdal(file, masked=True)
-            
-            # Apply reference point correction
-            if ref_y is not None and ref_x is not None:
-                data -= np.nan_to_num(data[ref_y, ref_x])
-          
-            # mask by specified dict of thresholds 
-            for dict_key in mask_dict.keys():
-                mask_lyr = file.replace(reflyr_name, dict_key)
-                mask_thres = mask_dict[dict_key]
-                mask_data = load_gdal(mask_lyr)
-                data[mask_data < mask_thres] = np.nan
- 
-            # Apply water mask
-            data = data * water_mask
-          
-            # Add to cumulative displacement
-            cumulative += data * phase2range
-
-        # convert nans to 0
-        # necessary to avoid errors with MintPy velocity fitting
-        return np.nan_to_num(cumulative)
-
     # set dictionary that will be used to mask TS by specified thresholds
     mask_dict = {}
 
     print(f"Writing data to HDF5 file {outfile}")
     writefile.layout_hdf5(outfile, ds_name_dict, metadata=meta)
 
+    reflyr_name = '.unw.tif'
     with h5py.File(outfile, "a") as f:
         prog_bar = ptime.progressBar(maxValue=num_date)
         # First date is always zero
@@ -624,7 +591,9 @@ def prepare_timeseries(
         # Calculate cumulative displacement for each date
         for i, date in enumerate(date_list[1:], start=1):
             displacement = calculate_cumulative_displacement(
-                date, water_mask, mask_dict, '.unw.tif')
+                date, date_list, water_mask, mask_dict, reflyr_name,
+                rows, cols, ref_y, ref_x, G, phase2range,
+                apply_tropo_correction, work_dir, median_height)
             if displacement is not None:
                 # writing timeseries to the date
                 f["timeseries"][i] = displacement
@@ -842,6 +811,9 @@ def main(iargs=None):
         metadata=meta,
         water_mask_file=inps.water_mask_file,
         ref_lalo=inps.ref_lalo,
+        apply_tropo_correction=inps.tropo_correction,
+        median_height=median_height,
+        work_dir=inps.work_dir if inps.tropo_correction else None,
     )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,

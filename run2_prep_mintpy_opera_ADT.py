@@ -7,7 +7,6 @@
 
 # Standard library imports
 import argparse
-import datetime
 import glob
 import itertools
 import os
@@ -16,16 +15,18 @@ from pathlib import Path
 from typing import Sequence
 
 # Third-party imports
-import affine
 import h5py
 import numpy as np
 import pyproj
-import rasterio
 from osgeo import gdal
-from rasterio import CRS
-from rasterio.warp import reproject, Resampling
 from tqdm import tqdm
 import networkx as nx
+
+from datetime import datetime as dt
+import random
+import requests
+import asf_search as asf
+import matplotlib.pyplot as plt
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -34,12 +35,10 @@ warnings.filterwarnings("ignore")
 sys.path.append(str(Path(__file__).parent / 'src'))
 
 # Local application/library-specific imports
-from dem_stitcher.stitcher import stitch_dem
 from mintpy.cli import (
     generate_mask,
     mask,
-    temporal_average,
-    ifgram_inversion
+    temporal_average
 )
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
@@ -64,7 +63,7 @@ from pst_dolphin_utils import (
     process_blocks,
     warp_to_match
 )
-from tile_mate import get_raster_from_tiles
+from pst_ts_utils import calculate_cumulative_displacement
 from tile_mate.stitcher import DATASET_SHORTNAMES
 
 OPERA_DATASET_ROOT = './'
@@ -220,6 +219,19 @@ def _create_parser():
         action="store_true",
         help="Extract short wavelength layers",
     )
+    parser.add_argument(
+        "--tropo-correction",
+        dest="tropo_correction",
+        action="store_true",
+        help="Apply tropospheric correction using HRRR weather model"
+    )
+    parser.add_argument(
+        "--work-dir",
+        dest="work_dir",
+        type=str,
+        default="./raider_intermediate_workdir",
+        help="Working directory for tropospheric correction intermediates"
+    )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
 
@@ -296,17 +308,17 @@ def prepare_metadata(meta_file, int_file, geom_dir, nlks_x=1, nlks_y=1):
     heading = azimuth2heading_angle(azimuth_angle)
     meta["HEADING"] = heading
 
-    t0 = datetime.datetime.strptime(
+    t0 = dt.strptime(
         meta_compass[f"{burst_ds}/sensing_start"][()].decode("utf-8"),
         "%Y-%m-%d %H:%M:%S.%f",
     )
-    t1 = datetime.datetime.strptime(
+    t1 = dt.strptime(
         meta_compass[f"{burst_ds}/sensing_stop"][()].decode("utf-8"),
         "%Y-%m-%d %H:%M:%S.%f",
     )
     t_mid = t0 + (t1 - t0) / 2.0
     meta["CENTER_LINE_UTC"] = (
-        t_mid - datetime.datetime(t_mid.year, t_mid.month, t_mid.day)
+        t_mid - dt(t_mid.year, t_mid.month, t_mid.day)
     ).total_seconds()
     meta["HEIGHT"] = 750000.0
     meta["STARTING_RANGE"] = meta_compass[f"{burst_ds}/starting_range"][()]
@@ -363,7 +375,7 @@ def write_coordinate_system(
 
         if "date" in hf:
             date_arr = [
-                datetime.datetime.strptime(ds, "%Y%m%d")
+                dt.strptime(ds, "%Y%m%d")
                 for ds in hf["date"][()].astype(str)
             ]
             days_since = [(d - date_arr[0]).days for d in date_arr]
@@ -515,6 +527,9 @@ def prepare_timeseries(
     ref_lalo=None,
     corr_lyrs=False,
     shortwvl_lyrs=False,
+    apply_tropo_correction=False,
+    median_height=50,
+    work_dir=None,
 ):
     """
     Prepare the timeseries file accounting for different reference dates
@@ -542,6 +557,11 @@ def prepare_timeseries(
        sp_coh_lyr_name = 'estimated_spatial_coherence'
     if track_version == 0.8:
        sp_coh_lyr_name = 'estimated_phase_quality'
+
+    if apply_tropo_correction and work_dir:
+        os.makedirs(work_dir, exist_ok=True)
+        os.makedirs(f'{work_dir}/orbits', exist_ok=True)
+        os.makedirs(f'weather_files', exist_ok=True)
 
     # grab date list from the filename
     date12_list = _get_date_pairs(unw_files)
@@ -604,61 +624,6 @@ def prepare_timeseries(
     meta["FILE_TYPE"] = "timeseries"
     meta["UNIT"] = "m"
 
-    def calculate_cumulative_displacement(
-        date, water_mask, mask_dict, reflyr_name
-    ):
-        """
-        Calculate cumulative displacement up to given date using shortest path
-        """
-        if date == date_list[0]:
-            return np.zeros((rows, cols), dtype=np.float32)
-        
-        # Find shortest path from first date to current date
-        try:
-            # Finding all paths (files) in the shortest path from
-            # the first date to given date
-            path = nx.shortest_path(G, source=date_list[0], target=date)
-        except nx.NetworkXNoPath:
-            print(f"Warning: No path found to date {date}")
-            return None
-
-        # Calculate cumulative displacement along the path
-        cumulative = np.zeros((rows, cols), dtype=np.float32)
-        print(f'\ndate for calculating cumulative displacement: {date}')
-        print(f'shortest path from {date_list[0]} to {date}')
-        for i in range(len(path)-1):
-            ref_date, sec_date = path[i], path[i+1]
-            file = G[ref_date][sec_date]['file']	# File in the shortest path
-            # Get reference input file layername
-            inpt_lyrname = file.split(':')[-1]
-            if inpt_lyrname != reflyr_name:
-                file = file.replace(inpt_lyrname, reflyr_name)
-            print(f'{i} {ref_date} to {sec_date}: {file}')	
-
-            # Read displacement data
-            data = load_gdal(file, masked=True)
-            
-            # Apply reference point correction
-            if ref_y is not None and ref_x is not None:
-                data -= np.nan_to_num(data[ref_y, ref_x])
-          
-            # mask by specified dict of thresholds 
-            for dict_key in mask_dict.keys():
-                mask_lyr = file.replace(reflyr_name, dict_key)
-                mask_thres = mask_dict[dict_key]
-                mask_data = load_gdal(mask_lyr)
-                data[mask_data < mask_thres] = np.nan
- 
-            # Apply water mask
-            data = data * water_mask
-          
-            # Add to cumulative displacement
-            cumulative += data * phase2range
-
-        # convert nans to 0
-        # necessary to avoid errors with MintPy velocity fitting
-        return np.nan_to_num(cumulative)
-
     # set dictionary that will be used to mask TS by specified thresholds
     mask_dict = {}
     #mask_dict['connected_component_labels'] = 1
@@ -708,7 +673,9 @@ def prepare_timeseries(
             # Calculate cumulative displacement for each date
             for i, date in enumerate(date_list[1:], start=1):
                 displacement = calculate_cumulative_displacement(
-                    date, water_mask, mask_dict, lyr_path)
+                    date, date_list, water_mask, mask_dict, lyr_path,
+                    rows, cols, ref_y, ref_x, G, phase2range,
+                    apply_tropo_correction, work_dir, median_height)
                 if displacement is not None:
                     # writing timeseries to the date
                     f["timeseries"][i] = displacement
@@ -1034,7 +1001,7 @@ def main(iargs=None):
 
     unw_files = sorted(
         glob.glob(inps.unw_file_glob),
-        key=lambda x: datetime.datetime.strptime(
+        key=lambda x: dt.strptime(
             x.split('_')[-1][:8], '%Y%m%d'
         )
     )
@@ -1185,6 +1152,9 @@ def main(iargs=None):
         ref_lalo=inps.ref_lalo,
         corr_lyrs=inps.corr_lyrs,
         shortwvl_lyrs=inps.shortwvl_lyrs,
+        apply_tropo_correction=inps.tropo_correction,
+        median_height=median_height,
+        work_dir=inps.work_dir if inps.tropo_correction else None,
     )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
@@ -1209,7 +1179,7 @@ def main(iargs=None):
         ts_date_list = f['date'][:]
 
     x_arr = [
-        datetime.datetime.strptime(
+        dt.strptime(
             date.decode('utf-8'), '%Y%m%d'
         )
         for date in ts_date_list

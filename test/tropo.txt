@@ -1,0 +1,160 @@
+def calculate_tropospheric_delay(params, work_dir):
+    """Calculate tropospheric delay for a single interferogram"""
+    
+    # Initialize weather model
+    weather_model = HRRR()
+    
+    # Extract parameters
+    track_number = params['track_number']
+    bounding_polygon = params['bounding_polygon']
+    ref_datetime = params['ref_datetime']
+    sec_datetime = params['sec_datetime']
+    GeoTransform = params['GeoTransform']
+    epsg_str = params['epsg'] 
+    mission_id = params['mission_id']
+    height = params['height']
+    width = params['width']
+    evaluation_height = int(params['median_height'])    # Get evaluation height
+
+    # Create polygon object
+    polygon = wkt.loads(bounding_polygon)
+    datetime_list = [ref_datetime, sec_datetime]
+
+    transform = [float(x) for x in GeoTransform.split()]
+    x_res = transform[1] 
+    y_res = transform[5] 
+    x_min = transform[0]  
+    y_max = transform[3]  
+ 
+    corners = get_bounds_from_geotransform(GeoTransform, width, height)     # bounds of input DISP-S1 based on GeoTransform
+    transformed_corners = transform_coords(corners, epsg_str, 'EPSG:4326')  # convert to EPSG:4326
+
+    # Calculate bounds
+    lons, lats = zip(*transformed_corners)
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    ll_bounds = [min_lat, max_lat, min_lon, max_lon]   # bounds of the DISP-S1  
+    print('Bounds of DISP-S1', ll_bounds)
+
+    # Process each date
+    delays = []
+    for _datetime in datetime_list:
+
+        _date = _datetime.strftime('%Y%m%d')
+        
+        # Find sensor
+        sensor = find_sentinel1_sensor(bounding_polygon, int(track_number), _date)
+        if not sensor:
+            sensor = mission_id
+            print('WARNING: sensor name was not correctly found by asf_search\n')
+            # raise ValueError(f"Could not determine sensor for date {_date}")
+            
+        # Setup area of interest
+        aoi = BoundingBox(ll_bounds)
+        aoi.add_buffer(weather_model.getLLRes())
+        aoi.set_output_xygrid(4326)
+        
+        # Download orbit file
+        orbit_file = str(download_eofs([_datetime], [sensor], 
+                                     save_dir=os.path.join(work_dir, 'orbits'),
+                                     orbit_type='precise')[0])
+        
+        print('Downloaded orbit file: ', orbit_file)
+        
+        # Setup LOS calculator
+        los = Raytracing(orbit_file, time=_datetime)
+        
+        if los.ray_trace():
+            wm_bounds = aoi.calc_buffer_ray(
+                los.getSensorDirection(),
+                lookDir=los.getLookDirection(),
+                incAngle=30
+            )
+        else:
+            wm_bounds = aoi.bounds()
+            
+        # Process weather model
+        weather_nc = prepareWeatherModel(
+            weather_model, 
+            _datetime,
+            ll_bounds=wm_bounds,
+            makePlots=False
+        )
+        
+        weather_model.set_latlon_bounds(
+            wm_bounds,
+            output_spacing=aoi.get_output_spacing()
+        )
+        
+        # Calculate delays
+        ds, _ = tropo_delay(
+            _datetime,
+            weather_model.out_file('weather_files'),
+            aoi,
+            los,
+            height_levels=[0, 100, 500, 1000]
+        )
+
+        delays.append((ds['wet'] + ds['hydro']).interp(z=evaluation_height))
+    
+    # Calculate differential delay
+    diff_delays_ds = (delays[0] - delays[1])    # If RAiDER output is two-way delay 
+    # diff_delays_ds = (delays[0] - delays[1]) * 2   # If RAiDER output is one-way delay
+    
+    # Rename the coordinates to follow CF conventions
+    diff_delays_ds = diff_delays_ds.rename({'x': 'longitude', 'y': 'latitude'})
+
+    # Add proper attributes
+    diff_delays_ds['longitude'].attrs.update({
+        'units': 'degrees_east',
+        'standard_name': 'longitude',
+        'long_name': 'longitude'
+    })
+
+    diff_delays_ds['latitude'].attrs.update({
+        'units': 'degrees_north',
+        'standard_name': 'latitude',
+        'long_name': 'latitude'
+    })
+
+    # Add CRS information
+    diff_delays_ds.attrs['crs'] = 'EPSG:4326'
+    
+    # Export and reproject
+    temp_tif = os.path.join(work_dir, 'temp_delay.tif')
+    diff_delays_ds.rio.to_raster(temp_tif)
+    
+    with rasterio.open(temp_tif) as src:
+        transform = Affine(x_res, 0.0, x_min,
+                      0.0, y_res, y_max)
+        
+        meta = src.meta.copy()
+        meta.update({
+            'crs': epsg_str,
+            'transform': transform,
+            'width': width,
+            'height': height
+        })
+        
+        reprojected_tif = os.path.join(work_dir, 'reprojected_delay.tif')
+        with rasterio.open(reprojected_tif, 'w', **meta) as dst:
+            reproject(
+                source=rasterio.band(src, 1),
+                destination=rasterio.band(dst, 1),
+                src_transform=src.transform,
+                src_crs=src.crs,
+                dst_transform=transform,
+                dst_crs=meta['crs'],
+                resampling=Resampling.lanczos
+            )
+    
+    # Read reprojected delay
+    with rasterio.open(reprojected_tif) as src:
+        tropo_delay_arr = src.read(1)
+    
+    # Clean up temporary files
+    os.remove(temp_tif)
+    os.remove(reprojected_tif)
+    
+    return tropo_delay_arr

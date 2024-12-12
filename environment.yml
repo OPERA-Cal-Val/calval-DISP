@@ -1,5 +1,5 @@
 # create environment : conda env create -f environment.yml
-name: calval_disp
+name: test_calval_disp
 channels:
   - conda-forge
   - defaults
