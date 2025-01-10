@@ -28,7 +28,7 @@ def createParser(iargs = None):
     parser.add_argument("--frameID", 
                         required=True, type=str, help='frameID of DISP-S1 to download (e.g., 33039)')
     parser.add_argument("--version",
-                        default=0.8, type=float, help='version of DISP-S1 (default: 0.8)') 
+                        default=0.9, type=float, help='version of DISP-S1 (default: 0.9)') 
     parser.add_argument("--dispDir",
                         default='outputs', type=str, help='directory to download DISP-S1 (default: outputs)')
     parser.add_argument("--startDate", 
@@ -102,6 +102,8 @@ def main(inps):
     os.makedirs(geomDir, exist_ok='True')
 
     bucket_name = 'opera-pst-rs-pop1'       # aws S3 bucket of PST
+    if inps.version == 0.9:
+        bucket_name = 'opera-int-rs-pop1'
     directory_name = f'products/DISP_S1'    # directory name where DISP-S1s locate
 
     print('S3 bucket name: ', bucket_name)
