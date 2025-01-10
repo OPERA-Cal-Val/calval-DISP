@@ -23,7 +23,7 @@ from rasterio.warp import reproject, Resampling
 from shapely import wkt
 
 def calculate_cumulative_displacement(
-    date, date_list, water_mask, mask_dict, reflyr_name,
+    date, date_list, water_mask, mask_dict, lyr_name,
     rows, cols, ref_y, ref_x, G, phase2range,
     apply_tropo_correction, work_dir, median_height
 ):
@@ -49,11 +49,14 @@ def calculate_cumulative_displacement(
     for i in range(len(path)-1):
         ref_date, sec_date = path[i], path[i+1]
         file = G[ref_date][sec_date]['file']	# File in the shortest path
+        reflyr_name = file.split(':')[-1]
+        file = file.replace(reflyr_name, lyr_name)
         print(f'{i} {ref_date} to {sec_date}: {file}')	
 
         # Read displacement data
         data = load_gdal(file, masked=True)
         data *= phase2range
+        data = data.astype(np.float32)  # Convert to numeric type
 
         # Apply tropospheric correction if requested
         if apply_tropo_correction and work_dir:
@@ -139,7 +142,7 @@ def calculate_cumulative_displacement(
         
         # mask by specified dict of thresholds 
         for dict_key in mask_dict.keys():
-            mask_lyr = file.replace(reflyr_name, dict_key)
+            mask_lyr = file.replace(lyr_name, dict_key)
             mask_thres = mask_dict[dict_key]
             mask_data = load_gdal(mask_lyr)
             data[mask_data < mask_thres] = np.nan
