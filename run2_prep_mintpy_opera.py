@@ -23,13 +23,13 @@ from tqdm import tqdm
 import networkx as nx
 
 from datetime import datetime as dt
-import time
 import random
 import rasterio
 import requests
 import asf_search as asf
 import matplotlib.pyplot as plt
 
+import time
 import rioxarray
 import xarray as xr
 import pandas as pd
@@ -647,7 +647,7 @@ def prepare_timeseries(
 
     # apply epoch-based masking
     if nomask is False:
-        mskfile = os.path.join(outfile, 'recommended_mask.h5')
+        mskfile = os.path.join(os.path.dirname(outfile), 'recommended_mask.h5')
         if track_version >= 0.8:
             # define chunk
             chunks = {'time':-1, 'y':512, 'x':512}
@@ -658,7 +658,7 @@ def prepare_timeseries(
                     tsstack_ts = ds_ts['timeseries'] * ds_msk['timeseries']
 
             # Save the modified variable back to the HDF5 file
-            with h5py.File(tsname, mode="r+") as h5file:
+            with h5py.File(outfile, mode="r+") as h5file:
                 h5file['timeseries'][:] = tsstack_ts.values
 
     return all_outputs, ref_meta
@@ -1152,6 +1152,7 @@ def main(iargs=None):
             unw_reader, cor_reader = readers
             unw_stack = unw_reader[:, rows, cols]
             weights = cor_reader[:, rows, cols]
+            cor_threshold = 0.4
             weights[weights < cor_threshold] = 0
         else:
             unw_stack = readers[0][:, rows, cols]
@@ -1244,7 +1245,7 @@ def main(iargs=None):
         mask.main(iargs)
 
     end_time = time.time()
-    print("end_time - start_time", end_time - start_time)
+    print(f"end_time - start_time, {(end_time - start_time)/60.: .2f} min")
 
     print("Done.")
     return
