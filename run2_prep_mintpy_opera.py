@@ -23,6 +23,7 @@ from tqdm import tqdm
 import networkx as nx
 
 from datetime import datetime as dt
+import time
 import random
 import rasterio
 import requests
