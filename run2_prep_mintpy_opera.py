@@ -250,10 +250,10 @@ def _create_parser():
         help="Extract all layers",
     )
     parser.add_argument(
-        "--nomask",
-        dest="nomask",
-        action="store_true",
-        help="Do not apply epoch based masking",
+        "--apply-mask",
+        dest="apply_mask",
+        action="store_true",    # Will be False by default
+        help="Apply epoch based masking"
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -475,7 +475,7 @@ def prepare_timeseries(
     median_height=50,
     work_dir=None,
     mask_lyrs=False,
-    nomask=False,
+    apply_mask=False,
 ):
     """
     Prepare the timeseries file accounting for different reference dates
@@ -646,7 +646,7 @@ def prepare_timeseries(
         all_outputs.append(lyr_fname)
 
     # apply epoch-based masking
-    if nomask is False:
+    if apply_mask:
         mskfile = os.path.join(os.path.dirname(outfile), 'recommended_mask.h5')
         if track_version >= 0.8:
             # define chunk
@@ -1102,7 +1102,7 @@ def main(iargs=None):
         median_height=median_height,
         work_dir=inps.work_dir if inps.tropo_correction else None,
         mask_lyrs=inps.mask_lyrs,
-        nomask=inps.nomask,
+        apply_mask=inps.apply_mask,
     )
 
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
