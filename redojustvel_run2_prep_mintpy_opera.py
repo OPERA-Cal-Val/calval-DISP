@@ -567,100 +567,9 @@ def prepare_timeseries(
 
     # update metadata
     ref_meta = reference_point_attribute(meta, y=ref_y, x=ref_x)
-    meta.update(ref_meta)
-    meta["FILE_TYPE"] = "timeseries"
-    meta["UNIT"] = "m"
-
-    # set dictionary that will be used to mask TS by specified thresholds
-    # vestigial placeholder
-    mask_dict = {}
     
     # loop through and write TS displacement and correction layers
     all_outputs = [outfile]
-    correction_layers = []
-    shortwvl_layer = []
-    if corr_lyrs is True:
-        correction_layers = ['ionospheric_delay',
-                             'solid_earth_tide']
-        if track_version < 0.8:
-            correction_layers.append('tropospheric_delay')
-
-    # Handle short wavelength layers
-    if shortwvl_lyrs is True and track_version >= 0.4:
-        shortwvl_layer = ['short_wavelength_displacement']
-
-    for ind, lyr in enumerate(
-        [disp_lyr_name] + shortwvl_layer + correction_layers
-    ):
-        # manually set TS output filename if not correction layer
-        if ind == 0:
-            lyr_fname = all_outputs[0]
-            lyr_path = f'{disp_lyr_name}'
-        else:
-            lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-            if lyr in correction_layers:
-                lyr_path = f'/corrections/{lyr}'
-            if lyr in shortwvl_layer or lyr in mask_layers:
-                lyr_path = f'{lyr}'
-            all_outputs.append(lyr_fname)
-
-        # Write timeseries data
-        print(f"Writing data to HDF5 file {lyr_fname}")
-        writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
-
-        with h5py.File(lyr_fname, "a") as f:
-            prog_bar = ptime.progressBar(maxValue=num_date)
-            # First date is always zero
-            f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
-            # Calculate cumulative displacement for each date
-            for i, date in enumerate(date_list[1:], start=1):
-                displacement = calculate_cumulative_displacement(
-                    date, date_list, water_mask, mask_dict, lyr_path,
-                    rows, cols, ref_y, ref_x, G, phase2range,
-                    apply_tropo_correction, work_dir, median_height)
-                if displacement is not None:
-                    # writing timeseries to the date
-                    f["timeseries"][i] = displacement
-                prog_bar.update(i, suffix=date)
-        
-            prog_bar.close()
-
-        print("finished writing to HDF5 file: {}".format(lyr_fname))
-    
-    # Handle additional layers (correction layers, mask layers, etc.)
-    mask_layers = []
-    if mask_lyrs is True:
-        mask_layers.extend(['connected_component_labels',
-            'temporal_coherence', sp_coh_lyr_name])
-
-    if track_version >= 0.8:
-        mask_layers.extend(['recommended_mask'])
-        if mask_lyrs is True:
-            mask_layers.extend(['water_mask'])
-
-    # Write mask and correlation layers to file
-    for lyr in mask_layers:
-        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-        lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
-        save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
-                   water_mask, date12_list, 1)
-        all_outputs.append(lyr_fname)
-
-    # apply epoch-based masking
-    if apply_mask:
-        mskfile = os.path.join(os.path.dirname(outfile), 'recommended_mask.h5')
-        if track_version >= 0.8:
-            # define chunk
-            chunks = {'time':-1, 'y':512, 'x':512}
-
-            # Open the dataset with xarray
-            with xr.open_mfdataset(outfile, chunks=chunks) as ds_ts:
-                with xr.open_mfdataset(mskfile, chunks=chunks) as ds_msk:
-                    tsstack_ts = ds_ts['timeseries'] * ds_msk['timeseries']
-
-            # Save the modified variable back to the HDF5 file
-            with h5py.File(outfile, mode="r+") as h5file:
-                h5file['timeseries'][:] = tsstack_ts.values
 
     return all_outputs, ref_meta
 
@@ -1069,21 +978,6 @@ def main(iargs=None):
         nlks_x=inps.lks_x, nlks_y=inps.lks_y
     )
 
-    # prepare mask layer outputs
-    avg_dir = os.path.join(inps.out_dir, 'avg_lyrs')
-    Path(avg_dir).mkdir(exist_ok=True)
-    prepare_stack(
-        out_dir=avg_dir,
-        product_files=product_files,
-        unw_files=unw_files,
-        disp_lyr_name=disp_lyr_name,
-        track_version=track_version,
-        metadata=meta,
-        water_mask_file=inps.water_mask_file,
-        ref_lalo=inps.ref_lalo,
-        mask_lyrs=inps.mask_lyrs,
-    )
-
     # prepare TS file
     og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
@@ -1105,9 +999,6 @@ def main(iargs=None):
         mask_lyrs=inps.mask_lyrs,
         apply_mask=inps.apply_mask,
     )
-
-    mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
-                            water_mask_file=inps.water_mask_file)
 
     # generate velocity fit
     # first set variables
