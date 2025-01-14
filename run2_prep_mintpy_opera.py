@@ -29,6 +29,8 @@ import requests
 import asf_search as asf
 import matplotlib.pyplot as plt
 
+from packaging.version import Version
+
 import time
 import rioxarray
 import xarray as xr
@@ -493,15 +495,15 @@ def prepare_timeseries(
 
     # pass lyr to disp conversion factor, which depends on the product version
     sp_coh_lyr_name = 'interferometric_correlation'
-    if track_version == 0.3:
+    if track_version == Version('0.3'):
         disp_lyr_name = 'unwrapped_phase'
         phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
-    if track_version >= 0.4:
+    if track_version >= Version('0.4'):
         disp_lyr_name = 'displacement'
         phase2range = 1
-    if track_version == 0.7:
+    if track_version == Version('0.7'):
        sp_coh_lyr_name = 'estimated_spatial_coherence'
-    if track_version >= 0.8:
+    if track_version >= Version('0.8'):
        sp_coh_lyr_name = 'estimated_phase_quality'
 
     if apply_tropo_correction and work_dir:
@@ -582,11 +584,11 @@ def prepare_timeseries(
     if corr_lyrs is True:
         correction_layers = ['ionospheric_delay',
                              'solid_earth_tide']
-        if track_version < 0.8:
+        if track_version < Version('0.8'):
             correction_layers.append('tropospheric_delay')
 
     # Handle short wavelength layers
-    if shortwvl_lyrs is True and track_version >= 0.4:
+    if shortwvl_lyrs is True and track_version >= Version('0.4'):
         shortwvl_layer = ['short_wavelength_displacement']
 
     for ind, lyr in enumerate(
@@ -633,7 +635,7 @@ def prepare_timeseries(
         mask_layers.extend(['connected_component_labels',
             'temporal_coherence', sp_coh_lyr_name])
 
-    if track_version >= 0.8:
+    if track_version >= Version('0.8'):
         mask_layers.extend(['recommended_mask'])
         if mask_lyrs is True:
             mask_layers.extend(['water_mask'])
@@ -649,7 +651,7 @@ def prepare_timeseries(
     # apply epoch-based masking
     if apply_mask:
         mskfile = os.path.join(os.path.dirname(outfile), 'recommended_mask.h5')
-        if track_version >= 0.8:
+        if track_version >= Version('0.8'):
             # define chunk
             chunks = {'time':-1, 'y':512, 'x':512}
 
@@ -789,11 +791,11 @@ def prepare_stack(
     conv_factor = 1
     # >=v0.4 increment in units of m, must be converted to phs
     sp_coh_lyr_name = 'interferometric_correlation'
-    if track_version >= 0.4:
+    if track_version >= Version('0.4'):
         conv_factor = -1 * (4.0 * np.pi) / float(metadata["WAVELENGTH"])
-    if track_version == 0.7:
+    if track_version == Version('0.7'):
        sp_coh_lyr_name = 'estimated_spatial_coherence'
-    if track_version >= 0.8:
+    if track_version >= Version('0.8'):
        sp_coh_lyr_name = 'estimated_phase_quality'
 
     print(f"number of unwrapped interferograms: {num_pair}")
@@ -861,10 +863,15 @@ def prepare_stack(
     stack = xr.open_mfdataset(disp_df.path.to_list(), chunks=chunks)
 
     # loop through and create files for spatial coherence
-    start_time = time.time()
     spcoh_fname = os.path.join(out_dir, 'estimatedSpatialCoherence.h5')
     prepare_average_stack(spcoh_fname, stack, sp_coh_lyr_name,
                           'estimatedSpatialCoherence', meta, water_mask)
+
+    # loop through and create files for temporal coherence
+    tempcoh_files = 'temporal_coherence'
+    tempcoh_fname = os.path.join(out_dir, 'temporalCoherence.h5')
+    prepare_average_stack(tempcoh_fname, stack, tempcoh_files,
+        'temporalCoherence', meta, water_mask)
 
     if water_mask_file is not None:
         # determine whether the defined reference point is valid
@@ -884,26 +891,17 @@ def prepare_stack(
                                 f'{water_mask_file} to inform selection '
                                 'of new point.')
 
-    # extract mask layers
+    # extract non-default mask layers
 
     if mask_lyrs is True:
         # loop through and create files for persistent scatterer
         ps_files = 'persistent_scatterer_mask'
-        ps_fname = os.path.join(os.path.dirname(outfile), 
-            'persistent_scatterer_mask.h5')
+        ps_fname = os.path.join(out_dir, 'persistent_scatterer_mask.h5')
         prepare_average_stack(ps_fname, stack, ps_files,
                           'persistentScatterer', meta, water_mask)
 
-        # loop through and create files for temporal coherence
-        tempcoh_files = 'temporal_coherence'
-        tempcoh_fname = os.path.join(os.path.dirname(outfile),
-            'temporalCoherence.h5')
-        prepare_average_stack(tempcoh_fname, stack, tempcoh_files,
-                          'temporalCoherence', meta, water_mask)
-
         # loop through and create files for connected components
-        conn_fname = os.path.join(os.path.dirname(outfile),
-            'connectedComponent.h5')
+        conn_fname = os.path.join(out_dir, 'connectedComponent.h5')
         prepare_average_stack(conn_fname, stack, cc_files,
                           'connectedComponent', meta, water_mask)
 
@@ -958,9 +956,7 @@ def main(iargs=None):
     track_version = []
     for i in product_files:
         fname = os.path.basename(i)
-        version_n = float(fname.split('_')[-2].split('v')[1])
-        # round to nearest tenth
-        version_n = round(version_n, 1)
+        version_n = Version(fname.split('_')[-2].split('v')[1])
         track_version.append(version_n)
 
     # exit if multiple versions are found
@@ -973,9 +969,9 @@ def main(iargs=None):
 
     # pass unw conversion factor, which depends on the product version
     track_version = track_version[0]
-    if track_version == 0.3:
+    if track_version == Version('0.3'):
         disp_lyr_name = 'unwrapped_phase'
-    if track_version >= 0.4:
+    if track_version >= Version('0.4'):
         disp_lyr_name = 'displacement'
 
     # append appropriate NETCDF prefixes
