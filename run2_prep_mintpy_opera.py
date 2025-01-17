@@ -693,7 +693,7 @@ def prepare_timeseries(
             lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
             if lyr in correction_layers:
                 lyr_path = f'/corrections/{lyr}'
-            if lyr in shortwvl_layer or lyr in mask_layers:
+            if lyr in shortwvl_layer:
                 lyr_path = f'{lyr}'
             all_outputs.append(lyr_fname)
 
