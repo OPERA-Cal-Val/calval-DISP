@@ -273,6 +273,29 @@ def cmd_line_parse(iargs=None):
     return inps
 
 
+def build_array_in_chunks(arr, chunk_size=50, array_dtype=np.int8,
+    threshold=None):
+    """
+    Chunk array to avoid memory error
+    """
+    # Create an output array of the same shape and target dtype
+    result = np.empty_like(arr, dtype=array_dtype)
+
+    # Iterate over the array in chunks along the first dimension
+    for i in range(0, arr.shape[0], chunk_size):
+        # Select a chunk
+        chunk = arr[i:i + chunk_size]
+        # Perform the operation on the chunk and store in the result array
+        if threshold is None:
+            result[i:i + chunk_size] = \
+                (chunk != 0).astype(array_dtype)
+        else:
+            result[i:i + chunk_size] = \
+                (chunk >= threshold).astype(array_dtype)
+    
+    return result
+
+
 def create_reliability_mask(mask_file, meta, threshold_ratio=0.9):
     """
     Create a reliability mask by summing valid pixels across time and
@@ -287,24 +310,39 @@ def create_reliability_mask(mask_file, meta, threshold_ratio=0.9):
         f'recommended_mask_{reliability_threshold_perc}thresh.h5')
 
     # compute pixel density arrays from recommended mask array
-    with h5py.File(mask_file, 'r') as f:
-        # Read the timeseries data
-        mask_timeseries = f['timeseries'][:]
-        
-        # Get the number of images
-        num_images = mask_timeseries.shape[0] - 1
-        
-        # Sum up the valid pixels (1's) across time
-        sum_valid = np.sum(mask_timeseries, axis=0)
-        
-        # Calculate the threshold number of valid observations required
-        threshold = int(num_images * threshold_ratio)
-        
-        # Create the final reliability mask
-        reliability_mask = (sum_valid >= threshold).astype(np.int8)
-
-        # compute time series density
-        timeseries_density = sum_valid / num_images
+    if os.path.exists(mask_file):
+        with h5py.File(mask_file, 'r') as f:
+            # Read the timeseries data
+            mask_timeseries = f['timeseries'][:]
+            # Get the number of images
+            num_images = mask_timeseries.shape[0] - 1
+            # Sum up the valid pixels (1's) across time
+            sum_valid = np.sum(mask_timeseries, axis=0)
+            # Calculate the threshold number of valid observations required
+            threshold = int(num_images * threshold_ratio)
+            # Create the final reliability mask
+            reliability_mask = build_array_in_chunks(sum_valid,
+                threshold=threshold)
+            # compute time series density
+            timeseries_density = sum_valid / num_images
+    else:
+        ts_file = os.path.join(out_dir, 'timeseries.h5')
+        with h5py.File(ts_file, 'r') as f:
+            # Read the timeseries data
+            mask_timeseries = f['timeseries'][:]
+            # Get the number of images
+            num_images = mask_timeseries.shape[0] - 1
+            # convert to binary array tracking nodata values
+            mask_timeseries = build_array_in_chunks(mask_timeseries)
+            # Sum up the valid pixels (1's) across time
+            sum_valid = np.sum(mask_timeseries, axis=0)
+            # Calculate the threshold number of valid observations required
+            threshold = int(num_images * threshold_ratio)
+            # Create the final reliability mask
+            reliability_mask = build_array_in_chunks(sum_valid,
+                threshold=threshold)
+            # compute time series density
+            timeseries_density = sum_valid / num_images
 
     # write arrays to file
     meta["UNIT"] = "1"
@@ -461,6 +499,7 @@ def save_stack(
     file_list,
     water_mask,
     date12_list,
+    track_version,
     phase2range=1,
     ref_y=None,
     ref_x=None,
@@ -481,6 +520,10 @@ def save_stack(
         for i,file_inc in enumerate(file_list):
             # read data using gdal
             data = load_gdal(file_inc, masked=True)
+
+            # if v0.8, convert array to 1s to circumvent empty mask bug
+            if track_version == Version('0.8'):
+                data = np.ones_like(data)               
 
             # apply reference point, if not None
             if ref_y is not None and ref_x is not None:
@@ -693,7 +736,8 @@ def prepare_timeseries(
         lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
         lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
         save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
-                   water_mask, date12_list, 1)
+                   water_mask, date12_list, track_version, 1,
+                   mask_dict=mask_dict)
         all_outputs.append(lyr_fname)
 
     # apply epoch-based masking
@@ -1289,8 +1333,6 @@ def main(iargs=None):
         # mask velocity file
         iargs = [vel_file, '--mask', msk_file]
         mask.main(iargs)
-
-    print(f"end_time - start_time, {(end_time - start_time)/60.: .2f} min")
 
     print("Done.")
     return
