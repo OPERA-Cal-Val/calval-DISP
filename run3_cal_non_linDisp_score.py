@@ -26,7 +26,8 @@ def calculate_window_std(start_row: int, end_row: int, start_col: int, end_col: 
     '''
 
     with h5py.File(ifg_stack_file, 'r') as f:
-        window_data = f['unwrapPhase'][depth:(depth+window_size), start_row:end_row, start_col:end_col] * (-wavelength/(4*np.pi))      # converting to meter
+        window_data = f['timeseries'][1:]
+        window_data = window_data[depth:(depth+window_size), start_row:end_row, start_col:end_col]
         window_data = np.transpose(window_data, (1,2,0))      # reshaping an array to have number of pairs to last axis
     
     window_data = window_data.reshape(-1,window_size)   # converting from 3D to 2D
@@ -42,7 +43,7 @@ def createParser(iargs = None):
     parser.add_argument("--mintpyDir",
                         default='mintpy_output', type=str, help='directory containing MintPy hdf files (default: mintpy_output)')
     parser.add_argument("--ifgStack", 
-                        default='inputs/ifgramStack.h5', type=str, help='location ifg stack hdf file inside mintpyDir (default: inputs/ifgramStack.h5)')
+                        default='timeseries.h5', type=str, help='location ifg stack hdf file inside mintpyDir (default: timeseries.h5)')
     parser.add_argument("--scoreMap", 
                         default='nonDispScore.h5', type=str, help='output: normalized non-linear displacement temporal score map (default: nonDispScore.h5)')
     parser.add_argument("--winSize", 
@@ -77,8 +78,9 @@ def main(inps):
         with h5py.File(ifgStack, 'r') as f:
             atr = dict(f.attrs)
             global wavelength
-            wavelength = float(atr['WAVELENGTH'])
-            num_ifgs , row, col = f['unwrapPhase'].shape
+            wavelength = 1
+            num_ifgs, row, col = f['timeseries'].shape
+            num_ifgs -= 1
         
         if nDepth:  # if number of depth is set
             num_ifgs = int(nDepth)      # replacing number of interferograms with input number

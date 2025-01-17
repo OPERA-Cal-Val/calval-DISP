@@ -10,50 +10,41 @@ import argparse
 import glob
 import itertools
 import os
+import random
 import sys
+import warnings
+from datetime import datetime as dt
 from pathlib import Path
 from typing import Sequence
 
 # Third-party imports
+import asf_search as asf
 import h5py
-import numpy as np
-import pyproj
-from osgeo import gdal
-from tqdm import tqdm
+import matplotlib.pyplot as plt
 import networkx as nx
-
-from datetime import datetime as dt
-import random
+import numpy as np
+import pandas as pd
+import pyproj
 import rasterio
 import requests
-import asf_search as asf
-import matplotlib.pyplot as plt
-
-from packaging.version import Version
-
-import time
 import rioxarray
 import xarray as xr
-import pandas as pd
+from osgeo import gdal
+from packaging.version import Version
+from tqdm import tqdm
 
-import warnings
+# Suppress warnings
 warnings.filterwarnings("ignore")
 
 # Add the src directory to sys.path
 sys.path.append(str(Path(__file__).parent / 'src'))
 
 # Local application/library-specific imports
-from mintpy.cli import (
-    generate_mask,
-    mask
-)
+from mintpy.cli import generate_mask, mask
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils import utils as ut
-from mintpy.utils.utils0 import (
-    azimuth2heading_angle,
-    calc_azimuth_from_east_north_obs
-)
+from mintpy.utils.utils0 import azimuth2heading_angle, calc_azimuth_from_east_north_obs
 from opera_utils import get_dates
 from pst_dolphin_utils import (
     BackgroundRasterWriter,
@@ -68,7 +59,7 @@ from pst_dolphin_utils import (
     HDF5StackReader,
     load_gdal,
     process_blocks,
-    warp_to_match
+    warp_to_match,
 )
 from pst_ts_utils import calculate_cumulative_displacement
 from tile_mate.stitcher import DATASET_SHORTNAMES
@@ -255,7 +246,15 @@ def _create_parser():
         "--apply-mask",
         dest="apply_mask",
         action="store_true",    # Will be False by default
-        help="Apply epoch based masking"
+        help="Apply epoch based masking",
+    )
+    parser.add_argument(
+        "--reliability-threshold",
+        dest="reliability_threshold",
+        type=float,
+        default=0.9,
+        help="Percentage of pixels across epoch in the recommended mask "
+             "layer that must be present across epochs"
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -272,6 +271,55 @@ def cmd_line_parse(iargs=None):
     inps.meta_file = sorted(glob.glob(inps.meta_file))[0]
 
     return inps
+
+
+def create_reliability_mask(mask_file, meta, threshold_ratio=0.9):
+    """
+    Create a reliability mask by summing valid pixels across time and
+    applying a threshold
+    """
+
+    # set output file paths
+    out_dir = os.path.dirname(mask_file)
+    timeseries_density_file = os.path.join(out_dir, 'timeseries_density.h5')
+    reliability_threshold_perc = int(threshold_ratio * 100)
+    recommended_mask_thres_file = os.path.join(out_dir,
+        f'recommended_mask_{reliability_threshold_perc}thresh.h5')
+
+    # compute pixel density arrays from recommended mask array
+    with h5py.File(mask_file, 'r') as f:
+        # Read the timeseries data
+        mask_timeseries = f['timeseries'][:]
+        
+        # Get the number of images
+        num_images = mask_timeseries.shape[0] - 1
+        
+        # Sum up the valid pixels (1's) across time
+        sum_valid = np.sum(mask_timeseries, axis=0)
+        
+        # Calculate the threshold number of valid observations required
+        threshold = int(num_images * threshold_ratio)
+        
+        # Create the final reliability mask
+        reliability_mask = (sum_valid >= threshold).astype(np.int8)
+
+        # compute time series density
+        timeseries_density = sum_valid / num_images
+
+    # write arrays to file
+    meta["UNIT"] = "1"
+    # write time series density to file
+    meta["FILE_TYPE"] = 'timeseries'
+    writefile.write(timeseries_density, timeseries_density_file,
+                    metadata=meta)
+
+    # write reliability mask to file
+    meta["DATA_TYPE"] = 'int8'
+    meta["FILE_TYPE"] = 'mask'
+    writefile.write(reliability_mask, recommended_mask_thres_file,
+                    metadata=meta)
+        
+    return
 
 
 def prepare_metadata(meta_file, int_file, geom_dir, nlks_x=1, nlks_y=1):
@@ -836,7 +884,6 @@ def prepare_stack(
         cols, rows = get_raster_xysize(unw_files[0])
         water_mask = np.ones((rows, cols), dtype=np.float32)
 
-    ######
     # get date info: date12_list
     date12_list = _get_date_pairs(product_files)
 
@@ -865,7 +912,7 @@ def prepare_stack(
     # loop through and create files for spatial coherence
     spcoh_fname = os.path.join(out_dir, 'estimatedSpatialCoherence.h5')
     prepare_average_stack(spcoh_fname, stack, sp_coh_lyr_name,
-                          'estimatedSpatialCoherence', meta, water_mask)
+        'estimatedSpatialCoherence', meta, water_mask)
 
     # loop through and create files for temporal coherence
     tempcoh_files = 'temporal_coherence'
@@ -892,27 +939,23 @@ def prepare_stack(
                                 'of new point.')
 
     # extract non-default mask layers
-
     if mask_lyrs is True:
         # loop through and create files for persistent scatterer
         ps_files = 'persistent_scatterer_mask'
         ps_fname = os.path.join(out_dir, 'persistent_scatterer_mask.h5')
         prepare_average_stack(ps_fname, stack, ps_files,
-                          'persistentScatterer', meta, water_mask)
+            'persistentScatterer', meta, water_mask)
 
         # loop through and create files for connected components
         conn_fname = os.path.join(out_dir, 'connectedComponent.h5')
         prepare_average_stack(conn_fname, stack, cc_files,
-                          'connectedComponent', meta, water_mask)
+            'connectedComponent', meta, water_mask)
 
     return
 
 
 def main(iargs=None):
     """Run the preparation functions."""
-    import time
-    start_time = time.time()
-
     inps = cmd_line_parse(iargs)
 
     product_files = sorted(
@@ -1102,8 +1145,14 @@ def main(iargs=None):
         apply_mask=inps.apply_mask,
     )
 
+    # prepare recommended mask-based density and threshold mask
+    recommended_mask_file = os.path.join(inps.out_dir, 'recommended_mask.h5')
+    create_reliability_mask(recommended_mask_file, meta,
+        threshold_ratio=inps.reliability_threshold)
+
+    # prepare geometry file
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
-                            water_mask_file=inps.water_mask_file)
+        water_mask_file=inps.water_mask_file)
 
     # generate velocity fit
     # first set variables
@@ -1241,7 +1290,6 @@ def main(iargs=None):
         iargs = [vel_file, '--mask', msk_file]
         mask.main(iargs)
 
-    end_time = time.time()
     print(f"end_time - start_time, {(end_time - start_time)/60.: .2f} min")
 
     print("Done.")
