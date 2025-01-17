@@ -309,7 +309,7 @@ def create_reliability_mask(mask_file, meta, threshold_ratio=0.9):
     # write arrays to file
     meta["UNIT"] = "1"
     # write time series density to file
-    meta["FILE_TYPE"] = 'timeseries'
+    meta["FILE_TYPE"] = 'timeseriesdensity'
     writefile.write(timeseries_density, timeseries_density_file,
                     metadata=meta)
 
