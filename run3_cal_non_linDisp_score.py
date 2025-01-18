@@ -20,14 +20,14 @@ warnings.filterwarnings("ignore")
 ncpus = len(psutil.Process().cpu_affinity())    # number of available CPUs
 
 # Define the function to be executed in parallel
-def calculate_window_std(start_row: int, end_row: int, start_col: int, end_col: int,depth: int, ifg_stack_file: str, window_size: int) -> Tuple[int, int, int, int, int, np.ndarray]:
+def calculate_window_std(start_row: int, end_row: int, start_col: int, end_col: int,depth: int, ts_file: str, window_size: int) -> Tuple[int, int, int, int, int, np.ndarray]:
     ''' 
     calculating standard deviation in temporally windowed data
     '''
 
-    with h5py.File(ifg_stack_file, 'r') as f:
-        window_data = f['timeseries'][1:]
-        window_data = window_data[depth:(depth+window_size), start_row:end_row, start_col:end_col]
+    with h5py.File(ts_file, 'r') as f:
+        window_data = f['timeseries'][depth:(depth+window_size), start_row:end_row, start_col:end_col]       # unit: meter
+        window_data[window_data==0.] = np.nan		# zeros in timeseries are no data
         window_data = np.transpose(window_data, (1,2,0))      # reshaping an array to have number of pairs to last axis
     
     window_data = window_data.reshape(-1,window_size)   # converting from 3D to 2D
@@ -42,8 +42,8 @@ def createParser(iargs = None):
     parser = argparse.ArgumentParser(description='Generating non-linear displacement score map')
     parser.add_argument("--mintpyDir",
                         default='mintpy_output', type=str, help='directory containing MintPy hdf files (default: mintpy_output)')
-    parser.add_argument("--ifgStack", 
-                        default='timeseries.h5', type=str, help='location ifg stack hdf file inside mintpyDir (default: timeseries.h5)')
+    parser.add_argument("--ts", 
+                        default='timeseries.h5', type=str, help='timeseries filename inside mintpyDir (default: timeseries.h5)')
     parser.add_argument("--scoreMap", 
                         default='nonDispScore.h5', type=str, help='output: normalized non-linear displacement temporal score map (default: nonDispScore.h5)')
     parser.add_argument("--winSize", 
@@ -52,38 +52,48 @@ def createParser(iargs = None):
                         default=ncpus, type=int, help='number of used cpu-cores (default: number of all available CPUs)')   
     parser.add_argument("--nPatch", 
                         default=20, type=int, help='number of patches in each row and col for multi processing (default: 20)')
-    parser.add_argument("--nDepth", help='number of pairs for calculating non-linear displacement score map (defaut: None, meaning all data are used)')
+    parser.add_argument("--startStack", default=0, type=int, help='start index of stacks (default: 0)')
+    parser.add_argument("--endStack", default=None, type=int, help='end index of stacks (default: None, meaning last of stack)')
     return parser.parse_args(args=iargs)
 
 def main(inps):
     mintpyDir = inps.mintpyDir
-    ifgStack = inps.ifgStack
+    ts = inps.ts
     scoreMap = inps.scoreMap
     winSize = inps.winSize
     nProcs = inps.nProcs
     nPatch = inps.nPatch
-    nDepth = inps.nDepth
+    startStack = inps.startStack
+    endStack = inps.endStack
 
-    ifgStack = f'{mintpyDir}/{ifgStack}'
+    ts = f'{mintpyDir}/{ts}'
     scoreMap = f'{mintpyDir}/{scoreMap}'
 
     print(f'number of all available CPU cores: {ncpus}')
     print(f'number of CPU cores to be used: {nProcs} \n')
 
-    assert nProcs <= ncpus  # input no. of cpus should be smaller than no. of available cpus
+    if nProcs > ncpus: 
+        nProcs = ncpus
 
     if os.path.exists(scoreMap):
         print(f'{scoreMap} already exists')
     else:
-        with h5py.File(ifgStack, 'r') as f:
-            atr = dict(f.attrs)
-            global wavelength
-            wavelength = 1
-            num_ifgs, row, col = f['timeseries'].shape
-            num_ifgs -= 1
-        
-        if nDepth:  # if number of depth is set
-            num_ifgs = int(nDepth)      # replacing number of interferograms with input number
+        with h5py.File(ts, 'r') as f:
+            num_ts , row, col = f['timeseries'].shape
+            datelist = f['date'][()]
+
+        print(f'input ts file: ', ts)
+        print(f'Shape of timeseries in input ts file: ({num_ts}, {row}, {col})')
+        print(f'time range of input ts file: {datelist[0].decode()} - {datelist[-1].decode()} \n')
+
+        if (endStack is None) or (endStack > (num_ts-1)):
+            endStack = (num_ts - 1 )
+
+        num_ts = endStack - startStack + 1
+
+        print(f'start index of stack: {startStack}, start date: {datelist[startStack].decode()}')
+        print(f'end index of stack: {endStack}, end date: {datelist[endStack].decode()}')
+        print(f'Number of stack used for calculating non-linear displacement score: {num_ts} \n')
 
         step_col = col // nPatch
         step_row = row // nPatch
@@ -110,12 +120,12 @@ def main(inps):
                 else:
                     end_row = list_row[ind_row + 1]
 
-                for depth in range(num_ifgs - winSize+ 1):
-                    params.append((start_row, end_row, start_col, end_col, depth, ifgStack, winSize))
+                for depth in range(startStack, startStack + num_ts - winSize+ 1):
+                    params.append((start_row, end_row, start_col, end_col, depth, ts, winSize))
 
         print('number of multi-processors: ', len(params))
 
-        variability_indices = np.zeros((row, col, num_ifgs - winSize + 1), dtype=np.float32)    # allocating space 
+        variability_indices = np.zeros((row, col, num_ts - winSize + 1), dtype=np.float32)    # allocating space 
 
         st_time = time.time()
 
@@ -126,14 +136,14 @@ def main(inps):
             for future in tqdm(concurrent.futures.as_completed(futures), total=len(params), desc="Processing"):
                 result = future.result()
                 start_row, end_row, start_col, end_col, depth, window_std = result
-                variability_indices[start_row:end_row, start_col:end_col ,depth] = window_std
+                variability_indices[start_row:end_row, start_col:end_col, depth - startStack] = window_std
 
         end_time = time.time()
         time_taken = np.round((end_time - st_time)/60.,2)
-        print(f'{time_taken} min taken for multi-core non-linear masking processing')
+        print(f'{time_taken} min taken for generating multi-core non-linear score map \n')
 
         sigma = np.std(variability_indices,axis=-1)
-        variability_scores = np.sum(variability_indices < sigma[..., np.newaxis], axis=2) / (num_ifgs - winSize + 1)     # ratio: normalized between 0 and 1
+        variability_scores = np.sum(variability_indices < sigma[..., np.newaxis], axis=2) / (num_ts - winSize + 1)     # ratio: normalized between 0 and 1
 
         fig, ax = plt.subplots(figsize=(12, 12))
         im = ax.imshow(variability_scores, cmap='viridis', interpolation='none')
