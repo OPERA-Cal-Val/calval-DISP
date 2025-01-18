@@ -41,6 +41,10 @@ def createParser(iargs = None):
                         default='static_lyrs', type=str, help='directory to store static layer files (default: static_lyrs)')
     parser.add_argument("--geomDir",
                         default='geometry', type=str, help='directory to store geometry files from static layers (default: geometry)')
+    parser.add_argument("--burstDB-version", 
+                        default='0.7.0', type=str, help='burst DB version (default: 0.7.0)')
+    parser.add_argument("--staticOnly",
+                        action='store_true', help='download only static layer files without nc files')
     return parser.parse_args(args=iargs)
 
 def download_file(bucket_name, file_key, local_path):
@@ -89,7 +93,7 @@ def filter_list_by_date_range(list_, start_date, end_date):
 
 def main(inps):
     frameID = inps.frameID
-    frameID = frameID.zfill(5)	# force frameID to have 5 digit number as string
+    frameID = frameID.zfill(5)    # force frameID to have 5 digit number as string
     version = inps.version 
     dispDir = inps.dispDir
     os.makedirs(dispDir, exist_ok='True')
@@ -100,44 +104,44 @@ def main(inps):
     os.makedirs(staticDir, exist_ok='True')
     geomDir = inps.geomDir
     os.makedirs(geomDir, exist_ok='True')
+    DB_ver = inps.burstDB_version
 
-    bucket_name = 'opera-pst-rs-pop1'       # aws S3 bucket of PST
-    if inps.version == 0.9:
-        bucket_name = 'opera-int-rs-pop1'
-    directory_name = f'products/DISP_S1'    # directory name where DISP-S1s locate
+    # Only process nc files if staticOnly is False
+    if not inps.staticOnly:
+        bucket_name = 'opera-pst-rs-pop1'       # aws S3 bucket of PST
+        if inps.version == 0.9:
+            bucket_name = 'opera-int-rs-pop1'
+        directory_name = f'products/DISP_S1'    # directory name where DISP-S1s locate
 
-    print('S3 bucket name: ', bucket_name)
-    print('DISP_S1 directory name in bucket: ', directory_name)
+        print('S3 bucket name: ', bucket_name)
+        print('DISP_S1 directory name in bucket: ', directory_name)
 
-    keyword1 = 'F' + frameID
-    keyword2 = '_v' + str(version)
+        keyword1 = 'F' + frameID
+        keyword2 = '_v' + str(version)
 
-    subdirectories = list_s3_directories(bucket_name, directory_name, keyword1=keyword1, keyword2=keyword2)  # search by frame ID
-    list_disp = [ dir.split('/')[-2] for dir in subdirectories]
-    list_disp = sorted(list_disp)
+        subdirectories = list_s3_directories(bucket_name, directory_name, keyword1=keyword1, keyword2=keyword2)  # search by frame ID
+        list_disp = [ dir.split('/')[-2] for dir in subdirectories]
+        list_disp = sorted(list_disp)
 
-    unique_dict = {get_key(x): x for x in list_disp}
-    list_disp = list(unique_dict.values())
+        unique_dict = {get_key(x): x for x in list_disp}
+        list_disp = list(unique_dict.values())
 
-    list_disp = filter_list_by_date_range(list_disp, startDate, endDate)       # filter by dates
+        list_disp = filter_list_by_date_range(list_disp, startDate, endDate)       # filter by dates
 
-    print('number of DISP-S1 to download: ', len(list_disp))
+        print('number of DISP-S1 to download: ', len(list_disp))
 
-    # Concurrent downloading of DISP-S1 nc files
-    with ThreadPoolExecutor(max_workers=nWorkers) as executor:
-        future_to_file = {executor.submit(download_file, bucket_name, f'products/DISP_S1/{select_disp}/{select_disp}.nc', f'{dispDir}/{select_disp}.nc'): select_disp for select_disp in list_disp}
-        for future in as_completed(future_to_file):
-            select_disp = future_to_file[future]
-            try:
-                future.result()
-            except Exception as exc:
-                print(f'{select_disp} generated an exception: {exc}')
+        # Concurrent downloading of DISP-S1 nc files
+        with ThreadPoolExecutor(max_workers=nWorkers) as executor:
+            future_to_file = {executor.submit(download_file, bucket_name, f'products/DISP_S1/{select_disp}/{select_disp}.nc', f'{dispDir}/{select_disp}.nc'): select_disp for select_disp in list_disp}
+            for future in as_completed(future_to_file):
+                select_disp = future_to_file[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f'{select_disp} generated an exception: {exc}')
 
-    # burst_ids = opera_utils.get_burst_ids_for_frame(int(frameID))     # forced to download zip file to cache
-
-    ## Access json matching bursts to frame IDs without downloading
-    # URL of the ZIP file containing the JSON file
-    repo_zip_url = 'https://github.com/opera-adt/burst_db/releases/download/v0.5.0/opera-s1-disp-0.5.0-frame-to-burst.json.zip'
+    # Access json matching bursts to frame IDs without downloading
+    repo_zip_url = f'https://github.com/opera-adt/burst_db/releases/download/v{DB_ver}/opera-s1-disp-{DB_ver}-frame-to-burst.json.zip'
 
     # Access the ZIP file
     response = requests.get(repo_zip_url)
@@ -145,11 +149,10 @@ def main(inps):
 
     # Extract the JSON file from the ZIP archive
     with zipfile.ZipFile(zip_data, 'r') as zip_ref:
-        # Assuming your JSON file is named 'data.json' within the ZIP
-        json_data = zip_ref.read('opera-s1-disp-0.5.0-frame-to-burst.json') 
+        json_data = zip_ref.read(f'opera-s1-disp-{DB_ver}-frame-to-burst.json') 
 
     # Load the JSON data
-    data = json.loads(json_data.decode('utf-8')) # ['features']
+    data = json.loads(json_data.decode('utf-8'))
     burst_ids = data['data'][frameID.lstrip('0')]['burst_ids']  # list of burst IDs within one frame ID
 
     # search CLSC Static Layer files
