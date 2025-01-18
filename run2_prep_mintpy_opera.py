@@ -731,6 +731,13 @@ def prepare_timeseries(
         if mask_lyrs is True:
             mask_layers.extend(['water_mask'])
 
+    # if v0.8, manually build up recommended mask because it is blank
+    # within the product
+    if track_version == Version('0.8'):
+        mask_dict['connected_component_labels'] = 1
+        mask_dict['temporal_coherence'] = 0.6
+        mask_dict[sp_coh_lyr_name] = 0.5
+
     # Write mask and correlation layers to file
     for lyr in mask_layers:
         lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
