@@ -760,8 +760,16 @@ def prepare_timeseries(
                     tsstack_ts = ds_ts['timeseries'] * ds_msk['timeseries']
 
             # Save the modified variable back to the HDF5 file
+            chunk_size = 50
             with h5py.File(outfile, mode="r+") as h5file:
-                h5file['timeseries'][:] = tsstack_ts.values
+                tsstack_shape = tsstack_ts.values.shape
+                # Iterate over the array in chunks along the first dimension
+                for i in range(0, tsstack_shape[0], chunk_size):
+                    start_c = i
+                    end_c = min(i + chunk_size, tsstack_shape[0])
+                    h5file['timeseries'][start_c:end_c, :, :] = (
+                        tsstack_ts.values[start_c:end_c, :, :]
+                    )
 
     return all_outputs, ref_meta
 
