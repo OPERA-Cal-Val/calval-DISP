@@ -763,12 +763,12 @@ def prepare_timeseries(
             chunk_size = 50
             with h5py.File(outfile, mode="r+") as h5file:
                 # Iterate over the array in chunks along the first dimension
-                for i in range(0, num_date, chunk_size):
-                    start_c = i
+                for start_c in range(0, num_date, chunk_size):
                     end_c = min(i + chunk_size, num_date)
-                    h5file['timeseries'][start_c:end_c, :, :] = (
-                        tsstack_ts.values[start_c:end_c, :, :]
-                    )
+                    # Compute only the current chunk
+                    chunk_ts = tsstack_ts.isel(
+                        phony_dim_1=slice(start_c, end_c)).values
+                    h5file['timeseries'][start_c:end_c, :, :] = chunk_ts
 
     return all_outputs, ref_meta
 
@@ -1242,7 +1242,8 @@ def main(iargs=None):
     writer = BackgroundRasterWriter(dolphin_vel_file,
         like_filename=dolphin_ref_tif)
     s = HDF5StackReader.from_file_list(
-            [og_ts_file], dset_names=dset_names, keep_open=keep_open
+            [og_ts_file], dset_names=dset_names, keep_open=keep_open,
+            num_threads=num_threads
         )
 
     # run dolphin velocity fitting algorithm in blocks
