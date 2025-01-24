@@ -762,11 +762,10 @@ def prepare_timeseries(
             # Save the modified variable back to the HDF5 file
             chunk_size = 50
             with h5py.File(outfile, mode="r+") as h5file:
-                tsstack_shape = tsstack_ts.values.shape
                 # Iterate over the array in chunks along the first dimension
-                for i in range(0, tsstack_shape[0], chunk_size):
+                for i in range(0, num_date, chunk_size):
                     start_c = i
-                    end_c = min(i + chunk_size, tsstack_shape[0])
+                    end_c = min(i + chunk_size, num_date)
                     h5file['timeseries'][start_c:end_c, :, :] = (
                         tsstack_ts.values[start_c:end_c, :, :]
                     )
