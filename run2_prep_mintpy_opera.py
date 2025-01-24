@@ -764,7 +764,7 @@ def prepare_timeseries(
             with h5py.File(outfile, mode="r+") as h5file:
                 # Iterate over the array in chunks along the first dimension
                 for start_c in range(0, num_date, chunk_size):
-                    end_c = min(i + chunk_size, num_date)
+                    end_c = min(start_c + chunk_size, num_date)
                     # Compute only the current chunk
                     chunk_ts = tsstack_ts.isel(
                         phony_dim_1=slice(start_c, end_c)).values
