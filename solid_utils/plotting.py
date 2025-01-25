@@ -14,30 +14,8 @@ def display_validation(pair_distance: NDArray, pair_difference: NDArray,
                        requirement: float = 2, distance_rqmt: list = [0.1, 50],
                        n_bins: int = 10, threshold: float = 0.683, 
                        sensor:str ='Sentinel-1', validation_type:str='secular',
-                       validation_data:str='GNSS'):
+                       validation_data:str='GNSS', min_points: int = 20):
 
-   '''
-    Parameters:
-      pair_distance : array      - 1d array of pair distances used in validation
-      pair_difference : array    - 1d array 0f pair double differenced velocity residuals
-      site_name : str            - name of the cal/val site
-      start_date  : str          - data record start date, eg. 20190101
-      end_date : str             - data record end date, eg. 20200101
-      requirement : float        - value required for test to pass
-                                    e.g, 2 mm/yr for 3 years of data over distance requiremeent
-      distance_rqmt : list       - distance over requirement is tested, eg. length scales of 0.1-50 km
-      n_bins : int               - number of bins
-      threshold : float          - threshold represents percentile of Gaussian normal distribution
-                                    within residuals are expected to be to pass the test
-                                    e.g. 0.683 for 68.3% or 1-sigma limit 
-      sensor : str               - sensor used in validation, e.g Sentinel-1 or NISAR
-      validation_type : str      - type of validation: secular, coseismic, transient
-      validation_data : str      - data used to validate against; GNSS or INSAR
-
-   Return
-      validation_table
-      validation_figure
-   '''
    # init dataframe
    df = pd.DataFrame(np.vstack([pair_distance,
                                 pair_difference]).T,
@@ -45,6 +23,11 @@ def display_validation(pair_distance: NDArray, pair_difference: NDArray,
 
    # remove nans
    df_nonan = df.dropna(subset=['double_diff'])
+   
+   # Check if there are enough points for validation
+   total_points = len(df_nonan)
+   insufficient_points = total_points < min_points
+   
    bins = np.linspace(*distance_rqmt, num=n_bins+1)
    bin_centers = (bins[:-1] + bins[1:]) / 2
    binned_df = df_nonan.groupby(pd.cut(df_nonan['distance'], bins),
@@ -101,17 +84,28 @@ def display_validation(pair_distance: NDArray, pair_difference: NDArray,
    # Add legend with validation info 
    textstr = f'{validation_type.capitalize()} requirement\n'
    textstr += f'Site: {site_name}\n'
-   if validation.loc['Total']['success_fail']:
-      validation_flag = 'PASSED'
-      validation_color = '#239d23'
-   else: 
-      validation_flag ='FAILED'
-      validation_color = '#bc2e2e'
+
+   if insufficient_points:
+       validation_flag = 'SPARSE'
+       validation_color = '#808080'  
+   else:
+       if validation.loc['Total']['success_fail']:
+           validation_flag = 'PASSED'
+           validation_color = '#239d23'
+       else: 
+           validation_flag = 'FAILED'
+           validation_color = '#bc2e2e'
 
    props = {**props, **{'facecolor':'none', 'edgecolor':'none'}}
    ax.text(0.818, 0.93, textstr, fontsize=8, bbox=props, **legend_kwargs)
-   ax.text(0.852, 0.82,  f"{validation_flag}",
-           fontsize=10, weight='bold',
+   
+   # Adjust text position based on validation flag length
+   text_x = 0.852 if validation_flag != 'Sparse' else 0.84
+   text_y = 0.82 
+   font_size = 10
+   
+   ax.text(text_x, text_y, validation_flag,
+           fontsize=font_size, weight='bold',
            bbox=props, **legend_kwargs)
 
    rect = patches.Rectangle((0.8, 0.75), 0.19, 0.2,
@@ -140,29 +134,29 @@ def display_validation(pair_distance: NDArray, pair_difference: NDArray,
 
    return validation, fig
 
-def display_validation_table(validation_table):
-    # Display Statistics
+def display_validation_table(validation_table, min_points=20):
+    total_points = validation_table.loc['Total', 'total_count[#]']
     def bold_last_row(row):
         is_total = row.name == 'Total'
         styles = ['font-weight: bold; font-size: 14px; border-top: 3px solid black' if is_total else '' for _ in row]
         return styles
     
     def style_success_fail(value):
+        if total_points < min_points:
+            return 'background-color: #f0f0f0'  
         color = '#e6ffe6' if value else '#ffe6e6'
         return 'background-color: %s' % color
 
-    # Overall pass/fail criterion
-    if validation_table.loc['Total'][validation_table.columns[-1]]:
-        print("This velocity dataset passes the requirement.")
+    if total_points < min_points:
+        print("Sparse GNSS points for validation.")
     else:
-        print("This velocity dataset does not pass the requirement.")
+        print("Dataset", "passes" if validation_table.loc['Total'][validation_table.columns[-1]] else "does not pass", "the requirement.")
 
     return (validation_table.style
             .bar(subset=['passed_pc'], vmin=0, vmax=1, color='gray')
             .format(lambda x: f'{x*100:.0f}%', na_rep="none", precision=1, subset=['passed_pc'])
             .apply(bold_last_row, axis=1)
-            .map(style_success_fail, subset=[validation_table.columns[-1]])
-           )
+            .map(style_success_fail, subset=[validation_table.columns[-1]]))
 
 def plot_transient_table(ratio_pd, site, percentage, thresthod, title_text, figname, annot=True):
     _df = ratio_pd.applymap(lambda x: pd.to_numeric(x, errors='coerce'))
