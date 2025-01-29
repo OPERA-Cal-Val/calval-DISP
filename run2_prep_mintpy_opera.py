@@ -335,7 +335,7 @@ def create_reliability_mask(mask_file, meta, threshold_ratio=0.9):
             # convert to binary array tracking nodata values
             mask_timeseries = build_array_in_chunks(mask_timeseries)
             # Sum up the valid pixels (1's) across time
-            sum_valid = np.sum(mask_timeseries, axis=0)
+            sum_valid = np.nansum(mask_timeseries, axis=0)
             # Calculate the threshold number of valid observations required
             threshold = int(num_images * threshold_ratio)
             # Create the final reliability mask
@@ -525,7 +525,7 @@ def save_stack(
                 track_version <= Version('0.8')
                 and reflyr_name == 'recommended_mask'
             ):
-                data = np.ones_like(water_mask, dtype=np.float16)
+                data = np.ones_like(water_mask, dtype=np.byte)
             else:
                 # read data using gdal
                 data = load_gdal(file_inc, masked=True)
@@ -539,7 +539,10 @@ def save_stack(
                 mask_lyr = file_inc.replace(reflyr_name, dict_key)
                 mask_thres = mask_dict[dict_key]
                 mask_data = load_gdal(mask_lyr)
-                data[mask_data < mask_thres] = np.nan
+                if reflyr_name == 'recommended_mask':
+                     data[mask_data < mask_thres] = np.nan
+                else:
+                     data[mask_data < mask_thres] = np.nan
 
             # also apply water mask
             data = data * water_mask
