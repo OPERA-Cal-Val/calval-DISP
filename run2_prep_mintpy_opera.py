@@ -518,12 +518,17 @@ def save_stack(
     with h5py.File(fname, "a") as f:
         prog_bar = ptime.progressBar(maxValue=num_file)
         for i,file_inc in enumerate(file_list):
-            # read data using gdal
-            data = load_gdal(file_inc, masked=True)
-
-            # if v0.8, convert array to 1s to circumvent empty mask bug
-            if track_version == Version('0.8'):
-                data = np.ones_like(data)               
+            # if <v0.8, recommended_mask layer does not exist
+            # if v0.8 there is an empty mask bug
+            # for both cases pass array of 1s
+            if (
+                track_version <= Version('0.8')
+                and reflyr_name == 'recommended_mask'
+            ):
+                data = np.ones_like(water_mask, dtype=np.float16)
+            else:
+                # read data using gdal
+                data = load_gdal(file_inc, masked=True)
 
             # apply reference point, if not None
             if ref_y is not None and ref_x is not None:
@@ -721,19 +726,18 @@ def prepare_timeseries(
         print("finished writing to HDF5 file: {}".format(lyr_fname))
     
     # Handle additional layers (correction layers, mask layers, etc.)
-    mask_layers = []
+    mask_layers = ['recommended_mask']
     if mask_lyrs is True:
         mask_layers.extend(['connected_component_labels',
             'temporal_coherence', sp_coh_lyr_name])
 
-    if track_version >= Version('0.8'):
-        mask_layers.extend(['recommended_mask'])
-        if mask_lyrs is True:
+    if track_version >= Version('0.8') and mask_lyrs is True:
             mask_layers.extend(['water_mask'])
 
+    # need to manually build recommended mask in <=0.7 products
     # if v0.8, manually build up recommended mask because it is blank
     # within the product
-    if track_version == Version('0.8'):
+    if track_version <= Version('0.8'):
         mask_dict['connected_component_labels'] = 1
         mask_dict['temporal_coherence'] = 0.6
         mask_dict[sp_coh_lyr_name] = 0.5
