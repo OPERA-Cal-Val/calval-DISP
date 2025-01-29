@@ -540,9 +540,9 @@ def save_stack(
                 mask_thres = mask_dict[dict_key]
                 mask_data = load_gdal(mask_lyr)
                 if reflyr_name == 'recommended_mask':
-                     data[mask_data < mask_thres] = np.nan
+                    data[mask_data < mask_thres] = 0
                 else:
-                     data[mask_data < mask_thres] = np.nan
+                    data[mask_data < mask_thres] = np.nan
 
             # also apply water mask
             data = data * water_mask
