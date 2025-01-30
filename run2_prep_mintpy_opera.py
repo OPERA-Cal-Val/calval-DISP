@@ -1234,8 +1234,10 @@ def main(iargs=None):
     ds = None
 
     # get list of times WRT to the reference time
+    # and also pass the TS data
     with h5py.File(og_ts_file, 'r') as f:
         ts_date_list = f['date'][:]
+        ts_data = f['timeseries'][:]
 
     x_arr = [
         dt.strptime(
@@ -1248,10 +1250,6 @@ def main(iargs=None):
     # initiate dolphin file object
     writer = BackgroundRasterWriter(dolphin_vel_file,
         like_filename=dolphin_ref_tif)
-    s = HDF5StackReader.from_file_list(
-            [og_ts_file], dset_names=dset_names, keep_open=keep_open,
-            num_threads=num_threads
-        )
 
     # run dolphin velocity fitting algorithm in blocks
     def read_and_fit(
@@ -1281,7 +1279,7 @@ def main(iargs=None):
             cols,
         )
 
-    readers = [s[0,:,:]]
+    readers = [ts_data]
     process_blocks(
         readers=readers,
         writer=writer,
