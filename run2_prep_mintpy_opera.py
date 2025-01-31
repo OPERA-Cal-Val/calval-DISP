@@ -471,15 +471,12 @@ def _get_date_pairs(filenames):
     str_list = [Path(f).stem for f in filenames]
     basenames_noext = [str(f).replace(full_suffix(f), "") for f in str_list]
 
-    # access dates from beta products differently than from golden outputs
     date_pairs = []
     for i in basenames_noext:
         num_parts = i.split('_')
         if len(num_parts) == 9:
             date_pair = f'{num_parts[6][:8]}_{num_parts[7][:8]}'
             date_pairs.append(date_pair)
-        if len(num_parts) == 2:
-            date_pairs.append(i)
 
     return date_pairs
 
@@ -562,6 +559,7 @@ def save_stack(
         f["timeseries"][0] = 0.0
 
     print("finished writing to HDF5 file: {}".format(fname))
+
 
 def prepare_timeseries(
     outfile,
@@ -1056,7 +1054,35 @@ def main(iargs=None):
             if sec_date <= endDate:
                 filtered_files.append(i)
         product_files = filtered_files
-    
+
+    # filter out duplicate products
+    str_list = [Path(f).stem for f in product_files]
+    basenames_noext = [str(f).replace(full_suffix(f), "") for f in str_list]
+    filtered_dict = {}
+    filtered_files = []
+    for i in product_files:
+        prod_basename = str(Path(i).stem)
+        num_parts = prod_basename.split('_')
+        # get date pairs
+        prod_pair = f'{num_parts[6][:8]}_{num_parts[7][:8]}'
+        # get production time
+        production_time = dt.strptime(prod_basename.split('_')[-1],
+            "%Y%m%dT%H%M%SZ")
+        # update with most recent duplicate product
+        if prod_pair in filtered_dict.keys():
+            if production_time > filtered_dict[prod_pair]:
+                filtered_dict[prod_pair] = production_time
+                print(
+                    "Rejecting older duplicate product "
+                    f"{str(Path(filtered_files[-1]).stem)} for newer "
+                    f"product {prod_basename}"
+                )
+                filtered_files[-1] = i
+        else:
+            filtered_dict[prod_pair] = production_time
+            filtered_files.append(i)
+
+    product_files = filtered_files
     date12_list = _get_date_pairs(product_files)
     print(f"Found {len(product_files)} unwrapped files")
 
