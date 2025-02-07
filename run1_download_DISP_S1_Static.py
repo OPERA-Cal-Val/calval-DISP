@@ -28,7 +28,7 @@ def createParser(iargs = None):
     parser.add_argument("--frameID", 
                         required=True, type=str, help='frameID of DISP-S1 to download (e.g., 33039)')
     parser.add_argument("--version",
-                        default=0.9, type=float, help='version of DISP-S1 (default: 0.9)') 
+                        default=1.0, type=float, help='version of DISP-S1 (default: 1.0)') 
     parser.add_argument("--dispDir",
                         default='outputs', type=str, help='directory to download DISP-S1 (default: outputs)')
     parser.add_argument("--startDate", 
