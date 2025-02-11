@@ -3,6 +3,7 @@
 # Program is part of MintPy                                #
 # Copyright (c) 2013, Zhang Yunjun, Heresh Fattahi         #
 # Author: Talib Oliver Cabrerra, Scott Staniewicz          #
+# Enhanced by Simran S Sangha, Jinwoo Kim                  #
 ############################################################
 
 # Standard library imports
@@ -16,6 +17,7 @@ import warnings
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Sequence
+import time
 
 # Third-party imports
 import asf_search as asf
@@ -32,6 +34,9 @@ import xarray as xr
 from osgeo import gdal
 from packaging.version import Version
 from tqdm import tqdm
+
+import psutil
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -69,22 +74,10 @@ OPERA_DATASET_ROOT = './'
 
 ####################################################################################
 EXAMPLE = """example:
-
-  prep_mintpy.py
-      -m pst_output/static_CSLCs/
-      -c "pst_output/dolphin_output/stitched_interferograms/*.zeroed.cor.tif"
-      -u "pst_output/dolphin_output/stitched_interferograms/*.unw.zeroed.tif"
-      --geom-dir pst_output/dolphin_output/stitched_interferograms/geometry
-      --ref-lalo '19.2485991551617 -155.32285148610057'
-      -o mintpy_output
-
-"""  # noqa: E501
-
-# """
-# Scott TODO:
-# - UTM_ZONE, EPSG from the stitched IFG (it won't work to get a single GSLC burst)
-# - pixel size is wrong since we're taking range/azimuth size, instead of geocoded size
-# - HEIGHT: do we wanna try to get that from the saved orbit info?
+  run2_prep_mintpy_opera_multi.py -m static_lyrs -u "outputs/*.nc" 
+       --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
+       --dem-file glo_30 --ref-lalo '29.692 -95.635'
+"""  
 
 
 def _create_parser():
@@ -247,6 +240,12 @@ def _create_parser():
         dest="apply_mask",
         action="store_true",    # Will be False by default
         help="Apply epoch based masking",
+    )
+    parser.add_argument(
+        "--n-workers",
+        type=int,
+        default=None,
+        help="Number of workers used for writing timeseries in parallel"
     )
     parser.add_argument(
         "--reliability-threshold",
@@ -560,6 +559,15 @@ def save_stack(
 
     print("finished writing to HDF5 file: {}".format(fname))
 
+def compute_displacement_parallel(date, date_list, water_mask, mask_dict, lyr_path,
+                               rows, cols, ref_y, ref_x, G, phase2range,
+                               apply_tropo_correction, work_dir, median_height):
+    """Wrapper for parallel displacement computation"""
+    result = calculate_cumulative_displacement(
+        date, date_list, water_mask, mask_dict, lyr_path,  
+        rows, cols, ref_y, ref_x, G, phase2range,
+        apply_tropo_correction, work_dir, median_height)
+    return result
 
 def prepare_timeseries(
     outfile,
@@ -575,6 +583,7 @@ def prepare_timeseries(
     work_dir=None,
     mask_lyrs=False,
     apply_mask=False,
+    n_workers=16
 ):
     """
     Prepare the timeseries file accounting for different reference dates
@@ -688,10 +697,7 @@ def prepare_timeseries(
     if shortwvl_lyrs is True and track_version >= Version('0.4'):
         shortwvl_layer = ['short_wavelength_displacement']
 
-    for ind, lyr in enumerate(
-        [disp_lyr_name] + shortwvl_layer + correction_layers
-    ):
-        # manually set TS output filename if not correction layer
+    for ind, lyr in enumerate([disp_lyr_name] + shortwvl_layer + correction_layers):
         if ind == 0:
             lyr_fname = all_outputs[0]
             lyr_path = f'{disp_lyr_name}'
@@ -703,29 +709,37 @@ def prepare_timeseries(
                 lyr_path = f'{lyr}'
             all_outputs.append(lyr_fname)
 
-        # Write timeseries data
         print(f"Writing data to HDF5 file {lyr_fname}")
         writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
 
-        with h5py.File(lyr_fname, "a") as f:
-            prog_bar = ptime.progressBar(maxValue=num_date)
-            # First date is always zero
-            f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
-            # Calculate cumulative displacement for each date
+        prog_bar = ptime.progressBar(maxValue=num_date)
+        timeseries = np.empty((num_date, rows, cols), dtype=np.float32)
+        timeseries[0] = np.zeros((rows, cols), dtype=np.float32)
+
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = []
             for i, date in enumerate(date_list[1:], start=1):
-                displacement = calculate_cumulative_displacement(
+                future = executor.submit(
+                    compute_displacement_parallel,
                     date, date_list, water_mask, mask_dict, lyr_path,
                     rows, cols, ref_y, ref_x, G, phase2range,
-                    apply_tropo_correction, work_dir, median_height)
+                    apply_tropo_correction, work_dir, median_height
+                )
+                futures.append((i, future))
+
+            for i, future in futures:
+                displacement = future.result()
                 if displacement is not None:
-                    # writing timeseries to the date
-                    f["timeseries"][i] = displacement
-                prog_bar.update(i, suffix=date)
-        
-            prog_bar.close()
+                    timeseries[i] = displacement
+                prog_bar.update(i, suffix=date_list[i])
+
+        prog_bar.close()
+
+        with h5py.File(lyr_fname, "a") as f:
+            f["timeseries"][:] = timeseries
 
         print("finished writing to HDF5 file: {}".format(lyr_fname))
-    
+
     # Handle additional layers (correction layers, mask layers, etc.)
     mask_layers = ['recommended_mask']
     if mask_lyrs is True:
@@ -814,7 +828,6 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     for dsName, fname in file_to_path.items():
         try:
             data = readfile.read(fname, datasetName=dsName)[0]
-            # TODO: add general functionality to handle nodata into Mintpy
             if dsName not in ['shadowMask', 'waterMask']:
                 data[data == 0] = np.nan
             dsDict[dsName] = data
@@ -1033,6 +1046,8 @@ def main(iargs=None):
     """Run the preparation functions."""
     inps = cmd_line_parse(iargs)
 
+    start_time = time.time()
+
     product_files = sorted(
         glob.glob(inps.unw_file_glob),
         key=lambda x: dt.strptime(
@@ -1226,6 +1241,11 @@ def main(iargs=None):
         mask_lyrs=inps.mask_lyrs,
     )
 
+    ncpus = len(psutil.Process().cpu_affinity())    # number of available CPUs
+
+    if inps.n_workers:
+        ncpus = inps.n_workers
+
     # prepare TS file
     og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
@@ -1246,6 +1266,7 @@ def main(iargs=None):
         work_dir=inps.work_dir if inps.tropo_correction else None,
         mask_lyrs=inps.mask_lyrs,
         apply_mask=inps.apply_mask,
+        n_workers=ncpus
     )
 
     # prepare recommended mask-based density and threshold mask
@@ -1392,6 +1413,7 @@ def main(iargs=None):
         iargs = [vel_file, '--mask', msk_file]
         mask.main(iargs)
 
+    print(f"Total processing time: {(time.time() - start_time)/60:.2f} minutes")
     print("Done.")
     return
 
