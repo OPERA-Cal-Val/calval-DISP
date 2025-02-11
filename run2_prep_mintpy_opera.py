@@ -76,7 +76,7 @@ OPERA_DATASET_ROOT = './'
 EXAMPLE = """example:
   run2_prep_mintpy_opera_multi.py -m static_lyrs -u "outputs/*.nc" 
        --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
-       --dem-file glo_30 --ref-lalo '29.692 -95.635'
+       --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64
 """  
 
 
@@ -487,6 +487,42 @@ def get_azimuth_ang(dsDict):
     azimuth_angle = calc_azimuth_from_east_north_obs(east, north)
     return azimuth_angle, east, north
 
+def process_file(args):
+    """Worker function to process a single file"""
+    file_inc, reflyr_name, water_mask, ref_y, ref_x, mask_dict, phase2range, track_version = args
+    
+    try:
+        # Handle recommended mask case
+        if track_version <= Version('0.8') and reflyr_name == 'recommended_mask':
+            data = np.ones_like(water_mask, dtype=np.byte)
+        else:
+            data = load_gdal(file_inc, masked=True)
+
+        # Apply reference point correction
+        if ref_y is not None and ref_x is not None:
+            data -= np.nan_to_num(data[ref_y, ref_x])
+
+        # Apply mask thresholds
+        for dict_key in mask_dict.keys():
+            mask_lyr = file_inc.replace(reflyr_name, dict_key)
+            mask_thres = mask_dict[dict_key]
+            mask_data = load_gdal(mask_lyr)
+            if reflyr_name == 'recommended_mask':
+                data[mask_data < mask_thres] = 0
+            else:
+                data[mask_data < mask_thres] = np.nan
+
+        # Apply water mask
+        data = data * water_mask
+
+        # Handle unwrapped files
+        if reflyr_name in ['unwrapped_phase', 'displacement']:
+            data = np.nan_to_num(data)
+
+        return data * phase2range
+
+    except Exception as e:
+        return f"Error processing {file_inc}: {str(e)}"
 
 def save_stack(
     fname,
@@ -501,63 +537,53 @@ def save_stack(
     ref_x=None,
     unw_file=False,
     mask_dict={},
-    ):
-    """Prepare h5 file for input stack of layers"""
-    # initiate file
+    n_workers=None,
+):
+    """Prepare h5 file for input stack of layers with parallel processing"""
+    # Initialize HDF5 file
     writefile.layout_hdf5(fname, ds_name_dict, metadata=meta)
-
-    # writing data to HDF5 file
+    
+    # Get layer name
     reflyr_name = file_list[0].split(':')[-1]
-    print("writing data to HDF5 file {} with a mode ...".format( \
-          fname))
-    num_file = len(file_list)
+    print(f"Writing data to HDF5 file {fname} with parallel processing...")
+    
+    # Prepare arguments for parallel processing
+    process_args = [(f, reflyr_name, water_mask, ref_y, ref_x, mask_dict, phase2range, track_version) 
+                   for f in file_list]
+    
+    # Use all available CPUs if not specified
+    if n_workers is None:
+        n_workers = len(psutil.Process().cpu_affinity())
+
+    results = []
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(process_file, args): i 
+                  for i, args in enumerate(process_args)}
+        
+        for future in tqdm(as_completed(futures), total=len(futures)):
+            idx = futures[future]
+            try:
+                result = future.result()
+                if isinstance(result, str) and result.startswith("Error"):
+                    print(result)
+                    continue
+                results.append((idx, result))
+            except Exception as e:
+                print(f"Error processing file {idx}: {str(e)}")
+                continue
+
+    # Sort results by original index and write to HDF5
+    results.sort(key=lambda x: x[0])
     with h5py.File(fname, "a") as f:
-        prog_bar = ptime.progressBar(maxValue=num_file)
-        for i,file_inc in enumerate(file_list):
-            # if <v0.8, recommended_mask layer does not exist
-            # if v0.8 there is an empty mask bug
-            # for both cases pass array of 1s
-            if (
-                track_version <= Version('0.8')
-                and reflyr_name == 'recommended_mask'
-            ):
-                data = np.ones_like(water_mask, dtype=np.byte)
-            else:
-                # read data using gdal
-                data = load_gdal(file_inc, masked=True)
-
-            # apply reference point, if not None
-            if ref_y is not None and ref_x is not None:
-                data -= np.nan_to_num(data[ref_y, ref_x])
-
-            # mask by specified dict of thresholds
-            for dict_key in mask_dict.keys():
-                mask_lyr = file_inc.replace(reflyr_name, dict_key)
-                mask_thres = mask_dict[dict_key]
-                mask_data = load_gdal(mask_lyr)
-                if reflyr_name == 'recommended_mask':
-                    data[mask_data < mask_thres] = 0
-                else:
-                    data[mask_data < mask_thres] = np.nan
-
-            # also apply water mask
-            data = data * water_mask
-
-            # if unw file, convert nans to 0
-            # necessary to avoid errors with MintPy velocity fitting
-            if unw_file is True:
-                data = np.nan_to_num(data)
-
-            # apply conversion factor and add to cube
-            f["timeseries"][i + 1] = data * phase2range
-            prog_bar.update(i + 1, suffix=date12_list[i])
-
-        prog_bar.close()
-
-        print("set value at the first acquisition to ZERO.")
+        # Write processed data
+        for i, (_, data) in enumerate(results, 1):
+            f["timeseries"][i] = data
+            
+        # Set first acquisition to zero
+        print("Setting value at the first acquisition to ZERO")
         f["timeseries"][0] = 0.0
 
-    print("finished writing to HDF5 file: {}".format(fname))
+    print(f"Finished writing to HDF5 file: {fname}")
 
 def compute_displacement_parallel(date, date_list, water_mask, mask_dict, lyr_path,
                                rows, cols, ref_y, ref_x, G, phase2range,
@@ -771,11 +797,11 @@ def prepare_timeseries(
         if lyr == 'timeseries_inversion_residuals':
             save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                        water_mask, date12_list, track_version, phase2range,
-                       mask_dict=mask_dict)
+                       mask_dict=mask_dict, n_workers=n_workers)
         else:
             save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                        water_mask, date12_list, track_version, 1,
-                       mask_dict=mask_dict)
+                       mask_dict=mask_dict, n_workers=n_workers)
         all_outputs.append(lyr_fname)
 
     # apply epoch-based masking
@@ -880,29 +906,32 @@ def chunked_nanmean(file_list, mask, chunk_size=50):
 
     return result
 
-
 def prepare_average_stack(outfile, stack, lyr_name, file_type, metadata,
-    water_mask=None):
-    """Average and export specified layers"""
-    print("-" * 50)
-    print("preparing average of stack: {}".format(outfile))
+    water_mask=None, n_workers=None):
+    """Average and export specified layers with parallel processing"""
+    if n_workers is None:
+        n_workers = len(psutil.Process().cpu_affinity())
 
-    # copy metadata to meta
-    meta = {key: value for key, value in metadata.items()}
-    meta["FILE_TYPE"] = file_type # "mask" "temporalCoherence"
-    meta["UNIT"] = "1"
-
-    # Dynamically access the variable from the xarray object
+    # Get the data variable and compute mean
     avg_data = getattr(stack, lyr_name)
-    avg_data = avg_data.mean(dim='time')
-    data = avg_data.values 
+    avg_data = avg_data.chunk({'time': -1, 'y': 512, 'x': 512})
+    avg_data = avg_data.mean(dim='time', skipna=True)
+    
+    # Convert to numpy array for writing
+    data = avg_data.compute(num_workers=n_workers).values
+
     if water_mask is not None:
         data *= water_mask
 
-    # write to HDF5 file
-    writefile.write(data, outfile, metadata=meta)
-    return outfile
+    meta = metadata.copy()
+    meta["FILE_TYPE"] = file_type
+    meta["UNIT"] = "1"
 
+    # Create dataset dict for writefile.write
+    datasetDict = {file_type: data}
+    writefile.write(datasetDict, outfile, metadata=meta)
+    
+    return outfile
 
 def prepare_stack(
     out_dir,
@@ -914,6 +943,7 @@ def prepare_stack(
     water_mask_file=None,
     ref_lalo=None,
     mask_lyrs=False,
+    n_workers=32
 ):
     """Prepare the input unw stack."""
     print("-" * 50)
@@ -1000,13 +1030,13 @@ def prepare_stack(
     # loop through and create files for spatial coherence
     spcoh_fname = os.path.join(out_dir, 'estimatedSpatialCoherence.h5')
     prepare_average_stack(spcoh_fname, stack, sp_coh_lyr_name,
-        'estimatedSpatialCoherence', meta, water_mask)
+        'estimatedSpatialCoherence', meta, water_mask, n_workers=n_workers)
 
     # loop through and create files for temporal coherence
     tempcoh_files = 'temporal_coherence'
     tempcoh_fname = os.path.join(out_dir, 'temporalCoherence.h5')
     prepare_average_stack(tempcoh_fname, stack, tempcoh_files,
-        'temporalCoherence', meta, water_mask)
+        'temporalCoherence', meta, water_mask, n_workers=n_workers)
 
     if water_mask_file is not None:
         # determine whether the defined reference point is valid
@@ -1226,6 +1256,10 @@ def main(iargs=None):
         nlks_x=inps.lks_x, nlks_y=inps.lks_y
     )
 
+    ncpus = len(psutil.Process().cpu_affinity())    # number of available CPUs
+    if inps.n_workers:
+        ncpus = inps.n_workers
+
     # prepare mask layer outputs
     avg_dir = os.path.join(inps.out_dir, 'avg_lyrs')
     Path(avg_dir).mkdir(exist_ok=True)
@@ -1239,12 +1273,8 @@ def main(iargs=None):
         water_mask_file=inps.water_mask_file,
         ref_lalo=inps.ref_lalo,
         mask_lyrs=inps.mask_lyrs,
+        n_workers=ncpus
     )
-
-    ncpus = len(psutil.Process().cpu_affinity())    # number of available CPUs
-
-    if inps.n_workers:
-        ncpus = inps.n_workers
 
     # prepare TS file
     og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
