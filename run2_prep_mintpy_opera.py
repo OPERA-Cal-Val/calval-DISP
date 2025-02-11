@@ -3,7 +3,7 @@
 # Program is part of MintPy                                #
 # Copyright (c) 2013, Zhang Yunjun, Heresh Fattahi         #
 # Author: Talib Oliver Cabrerra, Scott Staniewicz          #
-# Enhanced by Simran S Sangha, Jinwoo Kim                  #
+# DISP-S1 implementation by Simran S Sangha, Jinwoo Kim    #
 ############################################################
 
 # Standard library imports
