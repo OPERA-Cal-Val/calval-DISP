@@ -1,17 +1,52 @@
 #!/usr/bin/env python
-############################################################
-# Program is part of MintPy                                #
-# Copyright (c) 2013, Zhang Yunjun, Heresh Fattahi         #
-# Author: Talib Oliver Cabrerra, Scott Staniewicz          #
-# DISP-S1 implementation by Simran S Sangha, Jinwoo Kim    #
-############################################################
+"""Prepare and process OPERA DISP-S1 data for time series analysis with MintPy.
+
+This script processes OPERA DISP-S1 products to generate:
+1. Time series of cumulative displacement 
+2. Average spatial/temporal coherence maps
+3. Velocity maps and associated uncertainty estimates
+4. Quality control masks and correction layers
+
+The script handles parallel processing of large datasets and includes options for:
+- Water masking and correction layers
+- Reference point selection
+- Short wavelength displacement extraction
+- Quality control based on coherence thresholds
+
+Example:
+    python run2_prep_mintpy_opera.py -m static_lyrs -u "outputs/*.nc" 
+        --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
+        --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64
+
+Input Requirements:
+    - DISP-S1 NetCDF files containing displacements
+    - Static layer files with geometry information
+    - Optional: DEM file, water mask, reference coordinates
+
+Outputs:
+    - timeseries.h5: Cumulative displacement time series
+    - velocity.h5: Linear displacement rates
+    - geometryGeo.h5: Geometry information in geographic coordinates
+    - Multiple mask/coherence files for quality control
+
+Dependencies:
+    mintpy, gdal, rasterio, h5py, numpy, pandas, cartopy
+    opera_utils (for handling OPERA-specific file formats)
+
+Base code
+Copyright (c) 2013, Zhang Yunjun, Heresh Fattahi 
+Author: Talib Oliver Cabrerra, Scott Staniewicz 
+
+DISP-S1 Implementation
+Author: Simran S Sangha, Jinwoo Kim
+February, 2025
+"""
 
 # Standard library imports
 import argparse
 import glob
 import itertools
 import os
-import random
 import sys
 import warnings
 from datetime import datetime as dt
@@ -20,9 +55,7 @@ from typing import Sequence
 import time
 
 # Third-party imports
-import asf_search as asf
 import h5py
-import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -70,15 +103,6 @@ from pst_ts_utils import calculate_cumulative_displacement
 from tile_mate.stitcher import DATASET_SHORTNAMES
 
 OPERA_DATASET_ROOT = './'
-
-
-####################################################################################
-EXAMPLE = """example:
-  run2_prep_mintpy_opera_multi.py -m static_lyrs -u "outputs/*.nc" 
-       --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
-       --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64
-"""  
-
 
 def _create_parser():
     parser = argparse.ArgumentParser(
