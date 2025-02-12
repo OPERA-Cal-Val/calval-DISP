@@ -104,6 +104,12 @@ from tile_mate.stitcher import DATASET_SHORTNAMES
 
 OPERA_DATASET_ROOT = './'
 
+EXAMPLE = """example:
+  run2_prep_mintpy_opera_multi.py -m static_lyrs -u "outputs/*.nc" 
+       --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
+       --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64
+"""
+
 def _create_parser():
     parser = argparse.ArgumentParser(
         description="Prepare Sweets products for MintPy",
@@ -762,31 +768,26 @@ def prepare_timeseries(
         print(f"Writing data to HDF5 file {lyr_fname}")
         writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
 
-        prog_bar = ptime.progressBar(maxValue=num_date)
-        timeseries = np.empty((num_date, rows, cols), dtype=np.float32)
-        timeseries[0] = np.zeros((rows, cols), dtype=np.float32)
-
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            futures = []
-            for i, date in enumerate(date_list[1:], start=1):
-                future = executor.submit(
-                    compute_displacement_parallel,
-                    date, date_list, water_mask, mask_dict, lyr_path,
-                    rows, cols, ref_y, ref_x, G, phase2range,
-                    apply_tropo_correction, work_dir, median_height
-                )
-                futures.append((i, future))
-
-            for i, future in futures:
-                displacement = future.result()
-                if displacement is not None:
-                    timeseries[i] = displacement
-                prog_bar.update(i, suffix=date_list[i])
-
-        prog_bar.close()
-
         with h5py.File(lyr_fname, "a") as f:
-            f["timeseries"][:] = timeseries
+            prog_bar = ptime.progressBar(maxValue=num_date)
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                futures = []
+                for i, date in enumerate(date_list[1:], start=1):
+                    future = executor.submit(
+                        compute_displacement_parallel,
+                        date, date_list, water_mask, mask_dict, lyr_path,
+                        rows, cols, ref_y, ref_x, G, phase2range,
+                        apply_tropo_correction, work_dir, median_height
+                    )
+                    futures.append((i, future))
+
+                for i, future in futures:
+                    displacement = future.result()
+                    if displacement is not None:
+                        f["timeseries"][:] = displacement
+                    prog_bar.update(i, suffix=date_list[i])
+
+            prog_bar.close()
 
         print("finished writing to HDF5 file: {}".format(lyr_fname))
 
