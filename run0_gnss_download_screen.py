@@ -304,6 +304,8 @@ def createParser(iargs = None):
                         default=0.8, type=float, help='threshold by completeness of GNSS measurement (default: 0.8)')
     parser.add_argument("--gnss_thr_eq", 
                         default=11.0, type=float, help='threshold of earthquake magnitude for removing GNSS stations (default: 11)')
+    parser.add_argument("--burstDB-version", 
+                        default='0.8.0', type=str, help='burst DB version (default: 0.8.0)')
     return parser.parse_args(args=iargs)
 
 def main(inps):
@@ -387,7 +389,7 @@ def main(inps):
     ### Reading DISP-S1 Frames
     # Extracting DISP-S1 frame 
     # URL of the ZIP file containing the JSON file
-    repo_zip_url = 'https://github.com/opera-adt/burst_db/releases/download/v0.7.0/frame-geometries-simple-0.7.0.geojson.zip'
+    repo_zip_url = f'https://github.com/opera-adt/burst_db/releases/download/v{inps.burstDB_version}/frame-geometries-simple-{inps.burstDB_version}.geojson.zip'
 
     # Download the ZIP file
     response = requests.get(repo_zip_url)
@@ -396,7 +398,7 @@ def main(inps):
     # Extract the JSON file from the ZIP archive
     with zipfile.ZipFile(zip_data, 'r') as zip_ref:
         # Assuming your JSON file is named 'data.json' within the ZIP
-        json_data = zip_ref.read('frame-geometries-simple-0.7.0.geojson')
+        json_data = zip_ref.read(f'frame-geometries-simple-{inps.burstDB_version}.geojson')
 
     # Load the JSON data
     data = json.loads(json_data.decode('utf-8')) # ['features']
