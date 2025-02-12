@@ -387,7 +387,7 @@ def main(inps):
     ### Reading DISP-S1 Frames
     # Extracting DISP-S1 frame 
     # URL of the ZIP file containing the JSON file
-    repo_zip_url = 'https://github.com/opera-adt/burst_db/releases/download/v0.5.0/frame-geometries-simple-0.5.0.geojson.zip'
+    repo_zip_url = 'https://github.com/opera-adt/burst_db/releases/download/v0.7.0/frame-geometries-simple-0.7.0.geojson.zip'
 
     # Download the ZIP file
     response = requests.get(repo_zip_url)
@@ -396,7 +396,7 @@ def main(inps):
     # Extract the JSON file from the ZIP archive
     with zipfile.ZipFile(zip_data, 'r') as zip_ref:
         # Assuming your JSON file is named 'data.json' within the ZIP
-        json_data = zip_ref.read('frame-geometries-simple-0.5.0.geojson')
+        json_data = zip_ref.read('frame-geometries-simple-0.7.0.geojson')
 
     # Load the JSON data
     data = json.loads(json_data.decode('utf-8')) # ['features']
