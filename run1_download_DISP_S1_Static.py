@@ -1,4 +1,22 @@
 #!/usr/bin/env python3
+"""Download OPERA DISP-S1 products and static layers for displacement analysis.
+
+This script handles downloading of:
+1. DISP-S1 netCDF files from AWS S3 bucket 
+2. CSLC static layer files from ASF
+3. Associated geometry files
+
+It supports version-specific downloads and handles burst ID mapping between frames.
+
+Example:
+    python run1_download_DISP_S1_Static.py --frameID 33039 --version 1.0
+
+Dependencies:
+    asf_search, opera_utils, boto3, requests
+
+Author: Jinwoo Kim, Simran S Sangha
+February, 2025
+"""
 import argparse
 import os, json
 from datetime import datetime

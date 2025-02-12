@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""Calculate non-linear displacement temporal scores for OPERA DISP-S1 timeseries.
+
+This script generates a score map indicating the temporal variability of displacement 
+by analyzing rolling windows in the time series. Higher scores indicate more non-linear 
+behavior. Processing is parallelized across CPU cores.
+
+Example:
+    python run3_cal_non_linDisp_score.py --mintpyDir mintpy_output --winSize 11
+
+Outputs:
+    - nonDispScore.h5: Normalized score map (0-1) indicating temporal variability
+    - score_map.png: Visualization of the score map
+
+Dependencies:
+    h5py, numpy, pandas, mintpy
+
+Author: Jinwoo Kim, Mary Grace Bato
+February, 2025
+"""
 import argparse
 import os
 import numpy as np

@@ -1,4 +1,25 @@
 #!/usr/bin/env python3
+"""Download and screen GNSS measurements from UNR database for OPERA DISP-S1 validation.
+
+This script downloads GNSS station data that overlaps with specified DISP-S1 frame boundaries 
+and filters them based on data quality criteria including:
+- Minimum data completeness threshold
+- Earthquake magnitude thresholds  
+- Equipment change records
+- Time series anomaly detection
+
+The screened stations are saved to CSV files and visualized with quality control plots.
+
+Example:
+    python run0_gnss_download_screen.py --frameID 33039 --startDate 20160701 --endDate 20240930
+
+Dependencies:
+    mintpy, geopandas, ruptures, requests, matplotlib, numpy, pandas
+
+Author: Jinwoo Kim, Simran S Sangha
+February, 2025
+"""
+
 import argparse
 # Load standard library packages
 import json
