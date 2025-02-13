@@ -16,7 +16,7 @@ The script handles parallel processing of large datasets and includes options fo
 Example:
     python run2_prep_mintpy_opera.py -m static_lyrs -u "outputs/*.nc" 
         --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
-        --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64
+        --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64 --chunk-size 50
 
 Input Requirements:
     - DISP-S1 NetCDF files containing displacements
@@ -47,6 +47,7 @@ import argparse
 import glob
 import itertools
 import os
+import random
 import sys
 import warnings
 from datetime import datetime as dt
@@ -55,7 +56,9 @@ from typing import Sequence
 import time
 
 # Third-party imports
+import asf_search as asf
 import h5py
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -68,6 +71,7 @@ from osgeo import gdal
 from packaging.version import Version
 from tqdm import tqdm
 
+import gc
 import psutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -107,7 +111,7 @@ OPERA_DATASET_ROOT = './'
 EXAMPLE = """example:
   run2_prep_mintpy_opera_multi.py -m static_lyrs -u "outputs/*.nc" 
        --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
-       --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64
+       --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64 --chunk-size 50
 """
 
 def _create_parser():
@@ -284,6 +288,13 @@ def _create_parser():
         default=0.9,
         help="Percentage of pixels across epoch in the recommended mask "
              "layer that must be present across epochs"
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=50,
+        help="Chunk size for memory-efficient parallel processing:"
+              "the larger it is, the faster it gets, but it also increases memory risk."
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -568,6 +579,7 @@ def save_stack(
     unw_file=False,
     mask_dict={},
     n_workers=None,
+    chunk_size=50  
 ):
     """Prepare h5 file for input stack of layers with parallel processing"""
     # Initialize HDF5 file
@@ -577,39 +589,58 @@ def save_stack(
     reflyr_name = file_list[0].split(':')[-1]
     print(f"Writing data to HDF5 file {fname} with parallel processing...")
     
-    # Prepare arguments for parallel processing
-    process_args = [(f, reflyr_name, water_mask, ref_y, ref_x, mask_dict, phase2range, track_version) 
-                   for f in file_list]
-    
     # Use all available CPUs if not specified
     if n_workers is None:
         n_workers = len(psutil.Process().cpu_affinity())
 
-    results = []
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(process_file, args): i 
-                  for i, args in enumerate(process_args)}
+    # Process files in chunks to manage memory
+    for chunk_start in range(0, len(file_list), chunk_size):
+        chunk_end = min(chunk_start + chunk_size, len(file_list))
+        chunk_files = file_list[chunk_start:chunk_end]
         
-        for future in tqdm(as_completed(futures), total=len(futures)):
-            idx = futures[future]
-            try:
-                result = future.result()
-                if isinstance(result, str) and result.startswith("Error"):
-                    print(result)
-                    continue
-                results.append((idx, result))
-            except Exception as e:
-                print(f"Error processing file {idx}: {str(e)}")
-                continue
-
-    # Sort results by original index and write to HDF5
-    results.sort(key=lambda x: x[0])
-    with h5py.File(fname, "a") as f:
-        # Write processed data
-        for i, (_, data) in enumerate(results, 1):
-            f["timeseries"][i] = data
+        # Prepare arguments for parallel processing
+        process_args = [
+            (f, reflyr_name, water_mask, ref_y, ref_x, mask_dict, phase2range, track_version) 
+            for f in chunk_files
+        ]
+        
+        results = []
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = {
+                executor.submit(process_file, args): i 
+                for i, args in enumerate(process_args)
+            }
             
-        # Set first acquisition to zero
+            for future in tqdm(as_completed(futures), 
+                             total=len(futures), 
+                             desc=f"Processing chunk {chunk_start//chunk_size + 1}"):
+                idx = futures[future]
+                try:
+                    result = future.result()
+                    if isinstance(result, str) and result.startswith("Error"):
+                        print(result)
+                        continue
+                    results.append((idx, result))
+                except Exception as e:
+                    print(f"Error processing file {idx}: {str(e)}")
+                    continue
+
+        # Sort results by original index
+        results.sort(key=lambda x: x[0])
+        
+        # Write processed data to HDF5 in chunks
+        with h5py.File(fname, "a") as f:
+            for i, (_, data) in enumerate(results, chunk_start + 1):
+                f["timeseries"][i] = data
+                
+            # Clear results after writing
+            results.clear()
+        
+        # Force garbage collection
+        gc.collect()
+
+    # Set first acquisition to zero
+    with h5py.File(fname, "a") as f:
         print("Setting value at the first acquisition to ZERO")
         f["timeseries"][0] = 0.0
 
@@ -639,7 +670,8 @@ def prepare_timeseries(
     work_dir=None,
     mask_lyrs=False,
     apply_mask=False,
-    n_workers=16
+    n_workers=16,
+    chunk_size=50 
 ):
     """
     Prepare the timeseries file accounting for different reference dates
@@ -768,27 +800,52 @@ def prepare_timeseries(
         print(f"Writing data to HDF5 file {lyr_fname}")
         writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
 
+        # Initialize with zeros
         with h5py.File(lyr_fname, "a") as f:
-            prog_bar = ptime.progressBar(maxValue=num_date)
-            with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                futures = []
-                for i, date in enumerate(date_list[1:], start=1):
+            print("Setting value at the first acquisition to ZERO")
+            f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
+
+        prog_bar = ptime.progressBar(maxValue=num_date)
+
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            for chunk_start in range(1, num_date, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, num_date)
+                chunk_dates = date_list[chunk_start:chunk_end]
+                
+                # Initialize array just for this chunk
+                chunk_timeseries = np.empty((chunk_end - chunk_start, rows, cols), dtype=np.float32)
+                
+                # Submit jobs
+                future_to_idx = {}  # Map futures to their indices
+                for i, date in enumerate(chunk_dates):
                     future = executor.submit(
                         compute_displacement_parallel,
                         date, date_list, water_mask, mask_dict, lyr_path,
                         rows, cols, ref_y, ref_x, G, phase2range,
                         apply_tropo_correction, work_dir, median_height
                     )
-                    futures.append((i, future))
+                    future_to_idx[future] = i
 
-                for i, future in futures:
-                    displacement = future.result()
-                    if displacement is not None:
-                        f["timeseries"][:] = displacement
-                    prog_bar.update(i, suffix=date_list[i])
+                # Process completed futures
+                for future in as_completed(future_to_idx.keys()):
+                    idx = future_to_idx[future]
+                    try:
+                        displacement = future.result()
+                        if displacement is not None:
+                            chunk_timeseries[idx] = displacement
+                        prog_bar.update(chunk_start + idx, suffix=date_list[chunk_start + idx])
+                    except Exception as e:
+                        print(f"Error processing date {chunk_dates[idx]}: {str(e)}")
+                
+                # Write chunk to file
+                with h5py.File(lyr_fname, "a") as f:
+                    f["timeseries"][chunk_start:chunk_end] = chunk_timeseries
+                    
+                # Clear chunk data from memory
+                chunk_timeseries = None
+                gc.collect()
 
-            prog_bar.close()
-
+        prog_bar.close()
         print("finished writing to HDF5 file: {}".format(lyr_fname))
 
     # Handle additional layers (correction layers, mask layers, etc.)
@@ -818,39 +875,43 @@ def prepare_timeseries(
     for lyr in mask_layers:
         lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
         lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
+
+        # chunk_size = 25 if lyr == 'timeseries_inversion_residuals' else 50
+
         # need to convert TS inversion from radians
         if lyr == 'timeseries_inversion_residuals':
             save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                        water_mask, date12_list, track_version, phase2range,
-                       mask_dict=mask_dict, n_workers=n_workers)
+                       mask_dict=mask_dict, n_workers=n_workers, chunk_size=chunk_size)
         else:
             save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                        water_mask, date12_list, track_version, 1,
-                       mask_dict=mask_dict, n_workers=n_workers)
+                       mask_dict=mask_dict, n_workers=n_workers, chunk_size=chunk_size)
         all_outputs.append(lyr_fname)
 
     # apply epoch-based masking
     if apply_mask:
         mskfile = os.path.join(os.path.dirname(outfile), 'recommended_mask.h5')
         if track_version >= Version('0.8'):
-            # define chunk
+            # define chunk sizes
             chunks = {'time':-1, 'y':512, 'x':512}
 
-            # Open the dataset with xarray
+            # Open the datasets with xarray using defined chunks
             with xr.open_mfdataset(outfile, chunks=chunks) as ds_ts:
                 with xr.open_mfdataset(mskfile, chunks=chunks) as ds_msk:
                     tsstack_ts = ds_ts['timeseries'] * ds_msk['timeseries']
 
             # Save the modified variable back to the HDF5 file
-            chunk_size = 50
             with h5py.File(outfile, mode="r+") as h5file:
-                # Iterate over the array in chunks along the first dimension
                 for start_c in range(0, num_date, chunk_size):
                     end_c = min(start_c + chunk_size, num_date)
                     # Compute only the current chunk
-                    chunk_ts = tsstack_ts.isel(
-                        phony_dim_1=slice(start_c, end_c)).values
+                    chunk_ts = tsstack_ts.isel(phony_dim_1=slice(start_c, end_c)).values
                     h5file['timeseries'][start_c:end_c, :, :] = chunk_ts
+                    
+                    # Clear memory
+                    chunk_ts = None
+                    gc.collect()
 
     return all_outputs, ref_meta
 
@@ -1321,7 +1382,8 @@ def main(iargs=None):
         work_dir=inps.work_dir if inps.tropo_correction else None,
         mask_lyrs=inps.mask_lyrs,
         apply_mask=inps.apply_mask,
-        n_workers=ncpus
+        n_workers=ncpus,
+        chunk_size=inps.chunk_size
     )
 
     # prepare recommended mask-based density and threshold mask
