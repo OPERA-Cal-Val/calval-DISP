@@ -818,12 +818,21 @@ def prepare_timeseries(
                 # Submit jobs
                 future_to_idx = {}  # Map futures to their indices
                 for i, date in enumerate(chunk_dates):
-                    future = executor.submit(
-                        compute_displacement_parallel,
-                        date, date_list, water_mask, mask_dict, lyr_path,
-                        rows, cols, ref_y, ref_x, G, phase2range,
-                        apply_tropo_correction, work_dir, median_height
-                    )
+                    # Do not apply reference point to short wvl layer
+                    if lyr == shortwvl_layer[0]:
+                        future = executor.submit(
+                            compute_displacement_parallel,
+                            date, date_list, water_mask, mask_dict, lyr_path,
+                            rows, cols, None, None, G, phase2range,
+                            apply_tropo_correction, work_dir, median_height
+                        )
+                    else:
+                        future = executor.submit(
+                            compute_displacement_parallel,
+                            date, date_list, water_mask, mask_dict, lyr_path,
+                            rows, cols, ref_y, ref_x, G, phase2range,
+                            apply_tropo_correction, work_dir, median_height
+                        )
                     future_to_idx[future] = i
 
                 # Process completed futures
