@@ -9,7 +9,7 @@ This script handles downloading of:
 It supports version-specific downloads and handles burst ID mapping between frames.
 
 Example:
-    python run1_download_DISP_S1_Static.py --frameID 33039 --version 1.0
+    python run1_download_DISP_S1_Static.py --frameID 33039 --version 1.1
 
 Dependencies:
     asf_search, opera_utils, boto3, requests
@@ -46,7 +46,7 @@ def createParser(iargs = None):
     parser.add_argument("--frameID", 
                         required=True, type=str, help='frameID of DISP-S1 to download (e.g., 33039)')
     parser.add_argument("--version",
-                        default=1.0, type=float, help='version of DISP-S1 (default: 1.0)') 
+                        default=1.1, type=float, help='version of DISP-S1 (default: 1.1)') 
     parser.add_argument("--dispDir",
                         default='outputs', type=str, help='directory to download DISP-S1 (default: outputs)')
     parser.add_argument("--startDate", 
