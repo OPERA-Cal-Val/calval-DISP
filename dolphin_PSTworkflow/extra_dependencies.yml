@@ -1,0 +1,21 @@
+name: test_calval_disp
+channels:
+  - conda-forge
+dependencies:
+  - argcomplete
+  - boto3
+  - cvxopt
+  - dask>=1.0
+  - dask-jobqueue>=0.3
+  - h5py
+  - joblib
+  - lxml
+  - numpy
+  - pykml>=0.2
+  - pyproj
+  - rich
+  - scikit-image
+  - snaphu
+  - tile_mate>=0.0.12
+  - tophu
+  - tqdm
