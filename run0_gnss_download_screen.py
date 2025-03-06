@@ -335,7 +335,7 @@ def main(inps):
         '11115': ['ALTH', 'CHOW', 'DIAB', 'EBMD', 'OHLN', 'OREO', 'P177', 'P215', 'CAP4', 'CCSF', 'CSJB', 'FLNT', 'MHCB', 'P221', 'P274'],  # Central California
         '11116': ['ALTH', 'CAND', 'LAND', 'MULN', 'P174', 'P175', 'P235', 'P296', 'P532', 'P533', 'P540', 'POMM', 'FLNT', 'RDGM', 'TBLP'],  # Central California
         '12640': [],  # Florida
-        '18903': ['BKAP', 'BSRY', 'EDPP', 'HCMN', 'LJRN', 'P582', 'RAMT', 'THCP', 'WORG', 'CAVI', 'COSO', 'FOXG', 'QHTP'],  # Ridgecrest / Rosamond
+        '18903': ['BKAP', 'BSRY', 'EDPP', 'HCMN', 'LJRN', 'P582', 'RAMT', 'THCP', 'WORG', 'CAVI', 'COSO', 'FOXG', 'QHTP', 'CDMT'],  # Ridgecrest / Rosamond
         '28486': ['OKAL', 'TXCH', 'TXWL', 'OKAO', 'OKCS', 'OKER'],  # Oklahoma
         '33039': ['HOLE'],  # Hawaii
         '33065': ['AC25', 'CDB8', 'AB06', 'AC42', 'AV38'],  # Unimak, AK
