@@ -819,7 +819,7 @@ def prepare_timeseries(
                 future_to_idx = {}  # Map futures to their indices
                 for i, date in enumerate(chunk_dates):
                     # Do not apply reference point to short wvl layer
-                    if lyr == shortwvl_layer[0]:
+                    if lyr == 'short_wavelength_displacement':
                         future = executor.submit(
                             compute_displacement_parallel,
                             date, date_list, water_mask, mask_dict, lyr_path,
