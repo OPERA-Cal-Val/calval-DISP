@@ -306,6 +306,8 @@ def createParser(iargs = None):
                         default=11.0, type=float, help='threshold of earthquake magnitude for removing GNSS stations (default: 11)')
     parser.add_argument("--burstDB-version", 
                         default='0.8.0', type=str, help='burst DB version (default: 0.8.0)')
+    parser.add_argument("--gnss-source", default='UNR',
+                        choices=['UNR', 'SIDESHOW'], type=str, help='GNSS source (default: UNR)')
     return parser.parse_args(args=iargs)
 
 def main(inps):
@@ -350,12 +352,23 @@ def main(inps):
     gnss_to_remove = get_gnss_to_remove(site)
 
     # specify GNSS source for validation
-    gnss_source = 'UNR'
-    print(f'Searching for all GNSS stations from source: {gnss_source}')
-    print(f'May use any of the following supported sources: {gnss.GNSS_SOURCES}')
-    GNSS = gnss.get_gnss_class(gnss_source)
-    unr_data_holdings = 'http://geodesy.unr.edu/NGLStationPages/DataHoldings.txt'
-    gnss_steps_url = 'http://geodesy.unr.edu/NGLStationPages/steps.txt'
+    gnss_source = inps.gnss_source
+    if gnss_source == 'SIDESHOW':
+        try:
+            GNSS = gnss.get_gnss_class('SIDESHOW')
+        except (KeyError, ValueError, ImportError, AttributeError) as e:
+            # If the first attempt fails, try the alternative name
+            print(f"Failed to load SIDESHOW, trying JPL-SIDESHOW instead. Error was: {e}")
+            GNSS = gnss.get_gnss_class('JPL-SIDESHOW')
+    else:
+        # Normal handling for other sources
+        GNSS = gnss.get_gnss_class(gnss_source)
+        print(f'Searching for all GNSS stations from source: {gnss_source}')
+        print(f'May use any of the following supported sources: {gnss.GNSS_SOURCES}')
+        GNSS = gnss.get_gnss_class(gnss_source)
+
+    unr_data_holdings = 'https://raw.githubusercontent.com/OPERA-Cal-Val/calval-DISP/refs/heads/main/DataHoldings.txt'
+    gnss_steps_url = 'https://raw.githubusercontent.com/OPERA-Cal-Val/calval-DISP/refs/heads/main/steps.txt'
 
     ################# Set Directories ##########################################
     print('\nCurrent directory:', os.getcwd())
@@ -422,7 +435,20 @@ def main(inps):
     end_date_gnss = dt.strptime(end_date, "%Y%m%d")
 
     # search for collocated GNSS stations
-    site_names, site_lats_wgs84, site_lons_wgs84 = search_gnss(SNWE=DISP_region_geo,
+    if gnss_source == 'SIDESHOW':
+        try:
+            site_names, site_lats_wgs84, site_lons_wgs84 = search_gnss(SNWE=DISP_region_geo,
+                                                                    start_date=start_date,
+                                                                    end_date=end_date,
+                                                                    source=gnss_source)
+        except (KeyError, ValueError, ImportError, AttributeError) as e:
+
+            site_names, site_lats_wgs84, site_lons_wgs84 = search_gnss(SNWE=DISP_region_geo,
+                                                                    start_date=start_date,
+                                                                    end_date=end_date,
+                                                                    source='JPL-SIDESHOW')
+    else:
+        site_names, site_lats_wgs84, site_lons_wgs84 = search_gnss(SNWE=DISP_region_geo,
                                                                     start_date=start_date,
                                                                     end_date=end_date,
                                                                     source=gnss_source)
@@ -501,12 +527,18 @@ def main(inps):
     bad_lons_keepwgs84 = []
 
     # expected tenv column names
-    gnss_col_names = [
-        'site', 'YYMMMDD', 'yyyy.yyyy', 'MJD', 'week', 'd', 'reflon', 'e0(m)', 
-        'east(m)', 'n0(m)', 'north(m)', 'u0(m)', 'up(m)', 'ant(m)', 
-        'sig_e(m)', 'sig_n(m)', 'sig_u(m)', 'corr_en', 'corr_eu', 'corr_nu', 
-        'latitude(deg)', 'longitude(deg)', 'height(m)'
-    ]
+    if gnss_source == 'SIDESHOW':
+        gnss_col_names = [
+            'yyyy.yyyy','east(m)','north(m)','up(m)','sig_e(m)','sig_n(m)','sig_u(m)',
+            'corr_en','corr_eu','corr_nu','secJ2000','YEAR','MM','DD','HR','MN','SS'
+        ]
+    else:
+        gnss_col_names = [
+            'site', 'YYMMMDD', 'yyyy.yyyy', 'MJD', 'week', 'd', 'reflon', 'e0(m)', 
+            'east(m)', 'n0(m)', 'north(m)', 'u0(m)', 'up(m)', 'ant(m)', 
+            'sig_e(m)', 'sig_n(m)', 'sig_u(m)', 'corr_en', 'corr_eu', 'corr_nu', 
+            'latitude(deg)', 'longitude(deg)', 'height(m)'
+        ]
 
     fpath = os.path.join(work_dir,f'GNSS-{gnss_source}')
     for counter, stn in enumerate(site_names):
@@ -515,9 +547,28 @@ def main(inps):
         gps_obj.open(print_msg=False)
         
         # open file with pandas
-        fname = f'{fpath}/{stn}.tenv3'
+        if gnss_source == 'SIDESHOW':
+            fname = f'{fpath}/{stn}.series'
+        else:
+            fname = f'{fpath}/{stn}.tenv3'
+           
         df_gnss = pd.read_csv(fname, names=gnss_col_names, header=0, sep=r'\s+')
-        df_gnss['datetimes'] = pd.to_datetime(df_gnss['YYMMMDD'], format='%y%b%d')
+
+        if gnss_source == 'SIDESHOW':
+            # Construct datetime from YEAR, MM, DD, HR, MN, SS columns
+            df_gnss['datetimes'] = pd.to_datetime(
+                dict(
+                    year=df_gnss['YEAR'], 
+                    month=df_gnss['MM'], 
+                    day=df_gnss['DD'],
+                    hour=df_gnss['HR'],
+                    minute=df_gnss['MN'],
+                    second=df_gnss['SS']
+                )
+            )
+        else:
+            # Original parsing for non-SIDESHOW sources
+            df_gnss['datetimes'] = pd.to_datetime(df_gnss['YYMMMDD'], format='%y%b%d')
 
         # filter by dates
         range_days = (end_date_gnss - start_date_gnss).days
@@ -528,7 +579,10 @@ def main(inps):
         gnss_count = len(df_gnss)
         dates = df_gnss['datetimes'].to_list()
 
-        record_original_ts = f'{orig_gnss_ts}/{stn}.tenv3'
+        if gnss_source == 'SIDESHOW':
+            record_original_ts = f'{orig_gnss_ts}/{stn}.series'
+        else:
+            record_original_ts = f'{orig_gnss_ts}/{stn}.tenv3'
 
         # select GNSS stations based on data completeness
         if (range_days * gnss_completeness_threshold <= gnss_count) \
@@ -551,7 +605,10 @@ def main(inps):
                     bad_lats_keepwgs84.append(site_lats_wgs84[counter])
                     bad_lons_keepwgs84.append(site_lons_wgs84[counter])
                     # Quarantine the original TS to a separate directory
-                    record_bad_ts = f'{bad_gnss_dir}/{stn}.tenv3'
+                    if gnss_source == 'SIDESHOW':
+                        record_bad_ts = f'{bad_gnss_dir}/{stn}.series'
+                    else:
+                        record_bad_ts = f'{bad_gnss_dir}/{stn}.tenv3'
                     shutil.move(fname, record_original_ts)
                     continue
                     # reference_date = dates[0]
@@ -656,7 +713,10 @@ def main(inps):
                         plt.close()
 
                         # Quarantine the original TS to a separate directory
-                        record_bad_ts = f'{bad_gnss_dir}/{stn}.tenv3'
+                        if gnss_source == 'SIDESHOW':
+                            record_bad_ts = f'{bad_gnss_dir}/{stn}.series'
+                        else:
+                            record_bad_ts = f'{bad_gnss_dir}/{stn}.tenv3'
                         shutil.move(fname, record_original_ts)
 
                         # track bad stations
@@ -670,7 +730,10 @@ def main(inps):
                 use_lons_keepwgs84.append(site_lons_wgs84[counter])
         else:
             # Quarantine the original TS to a separate directory
-            record_bad_ts = f'{bad_gnss_dir}/{stn}.tenv3'
+            if gnss_source == 'SIDESHOW':
+                record_bad_ts = f'{bad_gnss_dir}/{stn}.series'
+            else:
+                record_bad_ts = f'{bad_gnss_dir}/{stn}.tenv3'
             shutil.move(fname, record_original_ts)
 
             # track bad stations
