@@ -253,21 +253,35 @@ def png_wrapper(png_dir,
         # query VA1 summary stats
         if i == 1:
             header_txt = f'VA1 statistics for frame {frame}'
-            input_pngs = [
+            site_png = [
                 str(i)
                 for i in frame_outputs.glob(
-                    'VA1_secular_disp_s1-gnss_velocity_vs_distance_*.png'
+                    'VA1_secular_disp_s1-gnss_velocity_vs_distance_s*.png'
                 )
             ]
+            tbl_png = [
+                str(i)
+                for i in frame_outputs.glob(
+                    'VA1_secular_disp_s1-gnss_velocity_vs_distance_t*.png'
+                )
+            ]
+            input_pngs = site_png + tbl_png
         # query VA2 summary stats
         if i == 2:
             header_txt = f'VA2 statistics for frame {frame}'
-            input_pngs = [
+            site_png = [
                 str(i)
                 for i in frame_outputs.glob(
-                    'VA1_secular_disp_s1-gnss_velocity_vs_distance_*.png'
+                    'VA2_secular_DISP-S1-only_vs_distance_s*.png'
                 )
             ]
+            tbl_png = [
+                str(i)
+                for i in frame_outputs.glob(
+                    'VA2_secular_DISP-S1-only_vs_distance_t*.png'
+                )
+            ]
+            input_pngs = site_png + tbl_png
         # query GNSS vs InSAR comparison plots
         if i > 2:
             header_txt = f'GNSS vs InSAR comparison for frame {frame}'
@@ -279,12 +293,7 @@ def png_wrapper(png_dir,
 
         # create temp PDF for each image
         for png in input_pngs:
-            # adjust dims to prep for GNSS plots
-            if i > 2:
-                update_pdf(temp_pdf, png, width, height, resolution,
-                    resize_factor=1.5)
-            else:
-                update_pdf(temp_pdf, png, width, height, resolution)
+            update_pdf(temp_pdf, png, width, height, resolution)
 
         if len(input_pngs) > 1:
             # combine images between 2 pages into one
@@ -477,6 +486,9 @@ def prep_disp_report(inps):
     height = 1035
     resolution = 1200
 
+    # pass script home directory
+    script_dir = Path(__file__).resolve().parent
+
     # pass inputs as Path objects
     inps.pdir = Path(inps.pdir)
     inps.outdir = Path(inps.outdir)
@@ -486,7 +498,7 @@ def prep_disp_report(inps):
         inps.outdir.mkdir(parents=True, exist_ok=True)
 
     # hardcode CSV summary name
-    csvs_file = Path('DISP_calval_summary.csv')
+    csvs_file = script_dir / 'DISP_calval_summary.csv'
     if not csvs_file.exists():
         raise Exception(f'Expected input csv {csvs_file}'
                          'not found in local path')
@@ -497,7 +509,7 @@ def prep_disp_report(inps):
         raise Exception(f'Specified output -f {inps.fname} already exists')
 
     # initialize output file with validation map
-    validation_map = 'DISP-S1_Calval_template.pdf'
+    validation_map = script_dir / 'DISP-S1_Calval_template.pdf'
     output_pdf.write_bytes(Path(validation_map).read_bytes())
 
     # add table from CSV file
