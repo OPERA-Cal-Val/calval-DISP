@@ -1,5 +1,5 @@
 # create environment : conda env create -f environment.yml
-name: test_calval_disp
+name: calval_disp
 channels:
   - conda-forge
   - defaults
@@ -21,9 +21,12 @@ dependencies:
   - numpy
   - pandas
   - papermill
+  - pillow
   - pip
+  - pypdf2
   - pyproj
   - pyresample
+  - pymupdf
   - rasterio
   - requests
   - rioxarray
@@ -40,3 +43,5 @@ dependencies:
   - pip:
     - hectorp
     - imgkit
+    - pdfkit
+    - Wand
