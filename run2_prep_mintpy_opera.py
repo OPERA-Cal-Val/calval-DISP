@@ -1404,140 +1404,145 @@ def main(iargs=None):
     mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
         water_mask_file=inps.water_mask_file)
 
-    # generate velocity fit
-    # first set variables
-    dolphin_ref_tif = os.path.join(inps.out_dir, 'dolphin_reference.tif')
-    dolphin_vel_file = os.path.join(inps.out_dir, 'velocity.tif')
-    vel_file = os.path.join(inps.out_dir, 'velocity.h5')
-    keep_open = False
-    dset_names = 'timeseries'
-    num_threads = 6
-    block_shape = (256, 256)
+    # generate velocity fit(s)
+    ts_dict = {}
+    ts_dict['velocity'] = og_ts_file
+    if inps.shortwvl_lyrs is True:
+        ts_dict['velocity_shortwvl'] = os.path.join(inps.out_dir,
+            'short_wavelength_displacement.h5')
 
-    # extract one product to serve as a reference file
-    ds = gdal.Translate(dolphin_ref_tif, unw_files[0])
-    ds = None
+    for vel_name, ts_name in ts_dict.items():
+        # first set variables
+        dolphin_ref_tif = os.path.join(inps.out_dir, 'dolphin_reference.tif')
+        dolphin_vel_file = os.path.join(inps.out_dir, f'{vel_name}.tif')
+        vel_file = os.path.join(inps.out_dir, f'{vel_name}.h5')
+        keep_open = False
+        dset_names = 'timeseries'
+        num_threads = 6
+        block_shape = (256, 256)
 
-    # get list of times WRT to the reference time
-    # and also pass the TS data
-    with h5py.File(og_ts_file, 'r') as f:
-        ts_date_list = f['date'][:]
-        ts_data = f['timeseries'][:]
+        # extract one product to serve as a reference file
+        ds = gdal.Translate(dolphin_ref_tif, unw_files[0])
+        ds = None
 
-    x_arr = [
-        dt.strptime(
-            date.decode('utf-8'), '%Y%m%d'
+        # get list of times WRT to the reference time
+        # and also pass the TS data
+        with h5py.File(ts_name, 'r') as f:
+            ts_date_list = f['date'][:]
+            ts_data = f['timeseries'][:]
+
+        x_arr = [
+            dt.strptime(
+                date.decode('utf-8'), '%Y%m%d'
+            )
+            for date in ts_date_list
+        ]
+        x_arr = datetime_to_float(x_arr)
+
+        # initiate dolphin file object
+        writer = BackgroundRasterWriter(dolphin_vel_file,
+            like_filename=dolphin_ref_tif)
+
+        # run dolphin velocity fitting algorithm in blocks
+        def read_and_fit(
+            readers: Sequence[HDF5StackReader],
+            rows: slice, cols: slice
+        ) -> tuple[np.ndarray, slice, slice]:
+
+            # Only use the cor_reader if it's the same shape as the unw_reader
+            if len(readers) == 2:
+                unw_reader, cor_reader = readers
+                unw_stack = unw_reader[:, rows, cols]
+                weights = cor_reader[:, rows, cols]
+                cor_threshold = 0.4
+                weights[weights < cor_threshold] = 0
+            else:
+                unw_stack = readers[0][:, rows, cols]
+                weights = None
+
+            # Fit a line to each pixel with weighted least squares
+            return (
+                estimate_velocity(
+                    x_arr=x_arr,
+                    unw_stack=unw_stack,
+                    weight_stack=weights
+                ),
+                rows,
+                cols,
+            )
+
+        readers = [ts_data]
+        process_blocks(
+            readers=readers,
+            writer=writer,
+            func=read_and_fit,
+            block_shape=block_shape,
+            num_threads=num_threads,
         )
-        for date in ts_date_list
-    ]
-    x_arr = datetime_to_float(x_arr)
 
-    # initiate dolphin file object
-    writer = BackgroundRasterWriter(dolphin_vel_file,
-        like_filename=dolphin_ref_tif)
+        writer.notify_finished()
 
-    # run dolphin velocity fitting algorithm in blocks
-    def read_and_fit(
-        readers: Sequence[HDF5StackReader],
-        rows: slice, cols: slice
-    ) -> tuple[np.ndarray, slice, slice]:
+        # delete temporary reference file
+        os.remove(dolphin_ref_tif)
 
-        # Only use the cor_reader if it's the same shape as the unw_reader
-        if len(readers) == 2:
-            unw_reader, cor_reader = readers
-            unw_stack = unw_reader[:, rows, cols]
-            weights = cor_reader[:, rows, cols]
-            cor_threshold = 0.4
-            weights[weights < cor_threshold] = 0
-        else:
-            unw_stack = readers[0][:, rows, cols]
-            weights = None
-
-        # Fit a line to each pixel with weighted least squares
-        return (
-            estimate_velocity(
-                x_arr=x_arr,
-                unw_stack=unw_stack,
-                weight_stack=weights
-            ),
-            rows,
-            cols,
-        )
-
-    readers = [ts_data]
-    process_blocks(
-        readers=readers,
-        writer=writer,
-        func=read_and_fit,
-        block_shape=block_shape,
-        num_threads=num_threads,
-    )
-
-    writer.notify_finished()
-
-    # delete temporary reference file
-    os.remove(dolphin_ref_tif)
-
-    # update metadata field
-    start_date = date12_list[0].split('_')[0]
-    end_date = date12_list[-1].split('_')[-1]
-    meta["DATA_TYPE"] = 'float32'
-    meta["DATE12"] =  start_date + '_' + end_date
-    meta["FILE_PATH"] = og_ts_file
-    meta["FILE_TYPE"] = 'velocity'
-    meta["NO_DATA_VALUE"] = 'none'
-    meta["PROCESSOR"] = 'dolphin'
-    meta["REF_DATE"] = start_date
-    meta["START_DATE"] = start_date
-    meta["END_DATE"] = end_date
-    meta["UNIT"] = 'm/year'
-    # apply reference point to velocity file
-    if ref_meta is not None:
-        meta['REF_LAT'] = ref_meta['REF_LAT']
-        meta['REF_LON'] = ref_meta['REF_LON']
-        meta['REF_Y'] = ref_meta['REF_Y']
-        meta['REF_X'] = ref_meta['REF_X']
-
-    # initiate HDF5 file
-    row = int(meta['LENGTH'])
-    col = int(meta['WIDTH'])
-    ds_name_dict = {
-        "velocity": [np.float32, (row, col), None],
-    }
-    writefile.layout_hdf5(vel_file, ds_name_dict, metadata=meta)
-
-    # writing data to HDF5 file
-    print("writing data to HDF5 file {} with a mode ...".format(vel_file))
-    with h5py.File(vel_file, "a") as f:
-        vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
-        # Convert 0s to NaN
-        vel_arr = np.where(vel_arr == 0, np.nan, vel_arr)
-        # apply reference point
+        # update metadata field
+        start_date = date12_list[0].split('_')[0]
+        end_date = date12_list[-1].split('_')[-1]
+        meta["DATA_TYPE"] = 'float32'
+        meta["DATE12"] =  start_date + '_' + end_date
+        meta["FILE_PATH"] = ts_name
+        meta["FILE_TYPE"] = 'velocity'
+        meta["NO_DATA_VALUE"] = 'none'
+        meta["PROCESSOR"] = 'dolphin'
+        meta["REF_DATE"] = start_date
+        meta["START_DATE"] = start_date
+        meta["END_DATE"] = end_date
+        meta["UNIT"] = 'm/year'
+        # apply reference point to velocity file
         if ref_meta is not None:
-            ref_y = int(ref_meta['REF_Y'])
-            ref_x = int(ref_meta['REF_X'])
-            vel_arr -= np.nan_to_num(vel_arr[ref_y, ref_x])
-        # write to file
-        f["velocity"][:] = vel_arr
+            meta['REF_LAT'] = ref_meta['REF_LAT']
+            meta['REF_LON'] = ref_meta['REF_LON']
+            meta['REF_Y'] = ref_meta['REF_Y']
+            meta['REF_X'] = ref_meta['REF_X']
 
-    print("finished writing to HDF5 file: {}".format(vel_file))
+        # initiate HDF5 file
+        row = int(meta['LENGTH'])
+        col = int(meta['WIDTH'])
+        ds_name_dict = {
+            "velocity": [np.float32, (row, col), None],
+        }
+        writefile.layout_hdf5(vel_file, ds_name_dict, metadata=meta)
 
-    # generate mask file from unw phase field
-    if inps.zero_mask is True:
-        msk_file = os.path.join(os.path.dirname(og_ts_file),
-            'combined_msk.h5')
-        iargs = [stack_file, 'unwrapPhase', '-o', msk_file, '--nonzero']
-        generate_mask.main(iargs)
+        # writing data to HDF5 file
+        print("writing data to HDF5 file {} with a mode ...".format(vel_file))
+        with h5py.File(vel_file, "a") as f:
+            vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
+            # Convert 0s to NaN
+            vel_arr = np.where(vel_arr == 0, np.nan, vel_arr)
+            # apply reference point
+            if ref_meta is not None:
+                ref_y = int(ref_meta['REF_Y'])
+                ref_x = int(ref_meta['REF_X'])
+                vel_arr -= np.nan_to_num(vel_arr[ref_y, ref_x])
+            # write to file
+            f["velocity"][:] = vel_arr
 
-        # mask TS file, since reference_point adds offset back in masked field
-        iargs = [og_ts_file, '--mask', msk_file]
-        mask.main(iargs)
-        # capture masked TS file
-        ts_file = os.path.join(inps.out_dir, "timeseries_msk.h5")
+        print("finished writing to HDF5 file: {}".format(vel_file))
 
-        # mask velocity file
-        iargs = [vel_file, '--mask', msk_file]
-        mask.main(iargs)
+        # generate mask file from unw phase field
+        if inps.zero_mask is True:
+            msk_file = os.path.join(os.path.dirname(ts_name),
+                'combined_msk.h5')
+            iargs = [stack_file, 'unwrapPhase', '-o', msk_file, '--nonzero']
+            generate_mask.main(iargs)
+
+            # mask TS file, since reference_point adds offset back in masked field
+            iargs = [ts_name, '--mask', msk_file]
+            mask.main(iargs)
+
+            # mask velocity file
+            iargs = [vel_file, '--mask', msk_file]
+            mask.main(iargs)
 
     print(f"Total processing time: {(time.time() - start_time)/60:.2f} minutes")
     print("Done.")
