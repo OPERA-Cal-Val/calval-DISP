@@ -14,7 +14,7 @@ The script handles parallel processing of large datasets and includes options fo
 - Quality control based on coherence thresholds
 
 Example:
-    python run2_prep_mintpy_opera.py -m static_lyrs -u "outputs/*.nc" 
+    run2_prep_mintpy_opera.py -u "outputs/*.nc" -m static_lyrs
         --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
         --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64 --chunk-size 50
 
@@ -47,39 +47,34 @@ import argparse
 import glob
 import itertools
 import os
-import random
 import sys
+import time
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Sequence
-import time
+
+import gc
 
 # Third-party imports
 import asf_search as asf
 import h5py
-import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
-import pyproj
+import psutil
 import rasterio
-import requests
-import rioxarray
 import xarray as xr
 from osgeo import gdal
 from packaging.version import Version
 from tqdm import tqdm
 
-import gc
-import psutil
-from concurrent.futures import ProcessPoolExecutor, as_completed
-
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
 # Add the src directory to sys.path
-sys.path.append(str(Path(__file__).parent / 'src'))
+sys.path.append(str(Path(__file__).parent / "src"))
 
 # Local application/library-specific imports
 from mintpy.cli import generate_mask, mask
@@ -90,6 +85,7 @@ from mintpy.utils.utils0 import azimuth2heading_angle, calc_azimuth_from_east_no
 from opera_utils import get_dates
 from pst_dolphin_utils import (
     BackgroundRasterWriter,
+    HDF5StackReader,
     create_external_files,
     datetime_to_float,
     estimate_velocity,
@@ -98,7 +94,6 @@ from pst_dolphin_utils import (
     get_raster_crs,
     get_raster_gt,
     get_raster_xysize,
-    HDF5StackReader,
     load_gdal,
     process_blocks,
     warp_to_match,
@@ -109,9 +104,9 @@ from tile_mate.stitcher import DATASET_SHORTNAMES
 OPERA_DATASET_ROOT = './'
 
 EXAMPLE = """example:
-  run2_prep_mintpy_opera_multi.py -m static_lyrs -u "outputs/*.nc" 
-       --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
-       --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64 --chunk-size 50
+    run2_prep_mintpy_opera.py -u "outputs/*.nc" -m static_lyrs
+        --geom-dir geometry -o mintpy_output --water-mask-file esa_world_cover_2021 
+        --dem-file glo_30 --ref-lalo '29.692 -95.635' --n-workers 64 --chunk-size 50
 """
 
 def _create_parser():
@@ -126,13 +121,6 @@ def _create_parser():
         "--unw-file-glob",
         type=str,
         default="./interferograms/unwrapped/*.unw.tif",
-        help="path pattern of unwrapped interferograms (default: %(default)s).",
-    )
-    parser.add_argument(
-        "-c",
-        "--cor-file-glob",
-        type=str,
-        default="./interferograms/stitched/*.cor",
         help="path pattern of unwrapped interferograms (default: %(default)s).",
     )
     parser.add_argument(
@@ -217,14 +205,6 @@ def _create_parser():
         help="Specify 'latitute longitude' of desired reference point. "
              "By default the pixel with the highest spatial coherence "
              "is selected",
-    )
-    parser.add_argument(
-        "--min-coherence",
-        dest="min_coherence",
-        type=str,
-        default='0.4',
-        help="Specify minimum coherence of reference pixel "
-             "for max-coherence method.",
     )
     parser.add_argument(
         "--zero-mask",
@@ -492,21 +472,6 @@ def prepare_metadata(meta_file, int_file, geom_dir, nlks_x=1, nlks_y=1):
     return meta
 
 
-def _get_xy_arrays(atr):
-    x0 = float(atr["X_FIRST"])
-    y0 = float(atr["Y_FIRST"])
-    x_step = float(atr["X_STEP"])
-    y_step = float(atr["Y_STEP"])
-    rows = int(atr["LENGTH"])
-    cols = int(atr["WIDTH"])
-    x_arr = x0 + x_step * np.arange(cols)
-    y_arr = y0 + y_step * np.arange(rows)
-    # Shift by half pixel to get the centers
-    x_arr += x_step / 2
-    y_arr += y_step / 2
-    return x_arr, y_arr
-
-
 def _get_date_pairs(filenames):
     str_list = [Path(f).stem for f in filenames]
     basenames_noext = [str(f).replace(full_suffix(f), "") for f in str_list]
@@ -526,7 +491,9 @@ def get_azimuth_ang(dsDict):
     east = dsDict["los_east"]
     north = dsDict["los_north"]
     azimuth_angle = calc_azimuth_from_east_north_obs(east, north)
+
     return azimuth_angle, east, north
+
 
 def process_file(args):
     """Worker function to process a single file"""
@@ -564,6 +531,7 @@ def process_file(args):
 
     except Exception as e:
         return f"Error processing {file_inc}: {str(e)}"
+
 
 def save_stack(
     fname,
@@ -646,21 +614,133 @@ def save_stack(
 
     print(f"Finished writing to HDF5 file: {fname}")
 
-def compute_displacement_parallel(date, date_list, water_mask, mask_dict, lyr_path,
-                               rows, cols, ref_y, ref_x, G, phase2range,
-                               apply_tropo_correction, work_dir, median_height):
+
+def compute_displacement_parallel(date, date_list, water_mask, mask_dict,
+    lyr_path, rows, cols, ref_y, ref_x, G, phase2range,
+    apply_tropo_correction, work_dir, median_height):
     """Wrapper for parallel displacement computation"""
+
     result = calculate_cumulative_displacement(
         date, date_list, water_mask, mask_dict, lyr_path,  
         rows, cols, ref_y, ref_x, G, phase2range,
         apply_tropo_correction, work_dir, median_height)
     return result
 
+def get_timeseries_parameters(prod_files):
+    """Wrapper to return parameters for TS files"""
+
+    # grab date list from the filename
+    date12_list = _get_date_pairs(prod_files)
+    num_file = len(prod_files)
+
+    # Create a directed graph to represent date connections
+    G = nx.DiGraph()
+    
+    # Add edges (measurements) to the graph
+    date_pairs = [dl.split("_") for dl in date12_list]
+    for (ref_date, sec_date), file in zip(date_pairs, prod_files):
+        G.add_edge(ref_date, sec_date, file=file)
+
+    # Get all unique dates
+    date_list = sorted(set(itertools.chain.from_iterable(date_pairs)))
+    num_date = len(date_list)
+
+    # size info
+    cols, rows = get_raster_xysize(prod_files[0])
+    # baseline info
+    pbase = np.zeros(num_date, dtype=np.float32)
+    # define dataset structure
+    dates = np.array(date_list, dtype=np.string_)
+    ds_name_dict = {
+        "date": [dates.dtype, (num_date,), dates],
+        "bperp": [np.float32, (num_date,), pbase],
+        "timeseries": [np.float32, (num_date, rows, cols), None],
+    }
+
+    return (
+        G, date_pairs, date_list, date12_list, 
+        num_date, cols, rows, ds_name_dict
+    )
+
+
+def generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows, cols,
+    num_date, chunk_size, n_workers, date_list, water_mask, mask_dict,
+    lyr_path, ref_y, ref_x, G, phase2range, apply_tropo_correction,
+    work_dir, median_height):
+    """Wrapper to generate TS h5 files"""
+
+    print(f"Writing data to HDF5 file {lyr_fname}")
+    writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
+
+    # Initialize with zeros
+    with h5py.File(lyr_fname, "a") as f:
+        print("Setting value at the first acquisition to ZERO")
+        f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
+
+    prog_bar = ptime.progressBar(maxValue=num_date)
+
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        for chunk_start in range(1, num_date, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, num_date)
+            chunk_dates = date_list[chunk_start:chunk_end]
+            
+            # Initialize array just for this chunk
+            chunk_timeseries = np.empty(
+                (chunk_end - chunk_start, rows, cols), dtype=np.float32)
+            
+            # Submit jobs
+            future_to_idx = {}  # Map futures to their indices
+            for i, date in enumerate(chunk_dates):
+                # Do not apply reference point to short wvl layer
+                if lyr == 'short_wavelength_displacement':
+                    future = executor.submit(
+                        compute_displacement_parallel,
+                        date, date_list, water_mask, mask_dict, lyr_path,
+                        rows, cols, None, None, G, phase2range,
+                        apply_tropo_correction, work_dir, median_height
+                    )
+                else:
+                    future = executor.submit(
+                        compute_displacement_parallel,
+                        date, date_list, water_mask, mask_dict, lyr_path,
+                        rows, cols, ref_y, ref_x, G, phase2range,
+                        apply_tropo_correction, work_dir, median_height
+                    )
+                future_to_idx[future] = i
+
+            # Process completed futures
+            for future in as_completed(future_to_idx.keys()):
+                idx = future_to_idx[future]
+                try:
+                    displacement = future.result()
+                    if displacement is not None:
+                        chunk_timeseries[idx] = displacement
+                    prog_bar.update(chunk_start + idx,
+                        suffix=date_list[chunk_start + idx])
+                except Exception as e:
+                    print(f"Error processing date {chunk_dates[idx]}: "
+                          f"{str(e)}")
+            
+            # Write chunk to file
+            with h5py.File(lyr_fname, "a") as f:
+                f["timeseries"][chunk_start:chunk_end] = chunk_timeseries
+                
+            # Clear chunk data from memory
+            chunk_timeseries = None
+            gc.collect()
+
+    prog_bar.close()
+    print("finished writing to HDF5 file: {}".format(lyr_fname))
+
+    return
+
 def prepare_timeseries(
     outfile,
     unw_files,
+    shortwvl_files,
     track_version,
     metadata,
+    last_indices,
     water_mask_file=None,
     ref_lalo=None,
     corr_lyrs=False,
@@ -671,7 +751,7 @@ def prepare_timeseries(
     mask_lyrs=False,
     apply_mask=False,
     n_workers=16,
-    chunk_size=50 
+    chunk_size=25 
 ):
     """
     Prepare the timeseries file accounting for different reference dates
@@ -705,37 +785,14 @@ def prepare_timeseries(
         os.makedirs(f'{work_dir}/orbits', exist_ok=True)
         os.makedirs(f'weather_files', exist_ok=True)
 
-    # grab date list from the filename
-    date12_list = _get_date_pairs(unw_files)
-    num_file = len(unw_files)
-    print("number of unwrapped interferograms: {}".format(num_file))
+    # return TS parameters for displacement + correction layers
+    (G, date_pairs, date_list, date12_list, num_date, cols, rows, 
+     ds_name_dict) = get_timeseries_parameters(unw_files)
 
-    # Create a directed graph to represent date connections
-    G = nx.DiGraph()
-    
-    # Add edges (measurements) to the graph
-    date_pairs = [dl.split("_") for dl in date12_list]
-    for (ref_date, sec_date), file in zip(date_pairs, unw_files):
-        G.add_edge(ref_date, sec_date, file=file)
-
-    # Get all unique dates
-    date_list = sorted(set(itertools.chain.from_iterable(date_pairs)))
-    num_date = len(date_list)
-    print("number of acquisitions: {}\n{}".format(num_date, date_list))
-
-    # size info
-    cols, rows = get_raster_xysize(unw_files[0])
-
-    # baseline info
-    pbase = np.zeros(num_date, dtype=np.float32)
-
-    # define dataset structure
-    dates = np.array(date_list, dtype=np.string_)
-    ds_name_dict = {
-        "date": [dates.dtype, (num_date,), dates],
-        "bperp": [np.float32, (num_date,), pbase],
-        "timeseries": [np.float32, (num_date, rows, cols), None],
-    }
+    # return TS parameters for short-wavelength layers
+    (G_subset, date_pairs_subset, date_list_subset, date12_list_subset,
+     num_date_subset, cols_subset, rows_subset,
+     ds_name_dict_subset) = get_timeseries_parameters(shortwvl_files)
 
     # read water mask
     if water_mask_file is not None:
@@ -774,7 +831,6 @@ def prepare_timeseries(
     # loop through and write TS displacement and correction layers
     all_outputs = [outfile]
     correction_layers = []
-    shortwvl_layer = []
     if corr_lyrs is True:
         correction_layers = ['ionospheric_delay',
                              'solid_earth_tide']
@@ -783,9 +839,19 @@ def prepare_timeseries(
 
     # Handle short wavelength layers
     if shortwvl_lyrs is True and track_version >= Version('0.4'):
-        shortwvl_layer = ['short_wavelength_displacement']
+        lyr = 'short_wavelength_displacement'
+        lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
+        all_outputs.append(lyr_fname)
 
-    for ind, lyr in enumerate([disp_lyr_name] + shortwvl_layer + correction_layers):
+        # generate TS file
+        generate_timeseries_h5(lyr_fname, lyr, ds_name_dict_subset, meta,
+            rows_subset, cols_subset, num_date_subset, chunk_size, n_workers,
+            date_list_subset, water_mask, mask_dict, lyr, ref_y, ref_x,
+            G_subset, phase2range, apply_tropo_correction, work_dir,
+            median_height)
+
+    # Generate TS files for displacement and correction layers
+    for ind, lyr in enumerate([disp_lyr_name] + correction_layers):
         if ind == 0:
             lyr_fname = all_outputs[0]
             lyr_path = f'{disp_lyr_name}'
@@ -793,69 +859,13 @@ def prepare_timeseries(
             lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
             if lyr in correction_layers:
                 lyr_path = f'/corrections/{lyr}'
-            if lyr in shortwvl_layer:
-                lyr_path = f'{lyr}'
             all_outputs.append(lyr_fname)
 
-        print(f"Writing data to HDF5 file {lyr_fname}")
-        writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
-
-        # Initialize with zeros
-        with h5py.File(lyr_fname, "a") as f:
-            print("Setting value at the first acquisition to ZERO")
-            f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
-
-        prog_bar = ptime.progressBar(maxValue=num_date)
-
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            for chunk_start in range(1, num_date, chunk_size):
-                chunk_end = min(chunk_start + chunk_size, num_date)
-                chunk_dates = date_list[chunk_start:chunk_end]
-                
-                # Initialize array just for this chunk
-                chunk_timeseries = np.empty((chunk_end - chunk_start, rows, cols), dtype=np.float32)
-                
-                # Submit jobs
-                future_to_idx = {}  # Map futures to their indices
-                for i, date in enumerate(chunk_dates):
-                    # Do not apply reference point to short wvl layer
-                    if lyr == 'short_wavelength_displacement':
-                        future = executor.submit(
-                            compute_displacement_parallel,
-                            date, date_list, water_mask, mask_dict, lyr_path,
-                            rows, cols, None, None, G, phase2range,
-                            apply_tropo_correction, work_dir, median_height
-                        )
-                    else:
-                        future = executor.submit(
-                            compute_displacement_parallel,
-                            date, date_list, water_mask, mask_dict, lyr_path,
-                            rows, cols, ref_y, ref_x, G, phase2range,
-                            apply_tropo_correction, work_dir, median_height
-                        )
-                    future_to_idx[future] = i
-
-                # Process completed futures
-                for future in as_completed(future_to_idx.keys()):
-                    idx = future_to_idx[future]
-                    try:
-                        displacement = future.result()
-                        if displacement is not None:
-                            chunk_timeseries[idx] = displacement
-                        prog_bar.update(chunk_start + idx, suffix=date_list[chunk_start + idx])
-                    except Exception as e:
-                        print(f"Error processing date {chunk_dates[idx]}: {str(e)}")
-                
-                # Write chunk to file
-                with h5py.File(lyr_fname, "a") as f:
-                    f["timeseries"][chunk_start:chunk_end] = chunk_timeseries
-                    
-                # Clear chunk data from memory
-                chunk_timeseries = None
-                gc.collect()
-
-        prog_bar.close()
-        print("finished writing to HDF5 file: {}".format(lyr_fname))
+        # generate TS file
+        generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows,
+            cols, num_date, chunk_size, n_workers, date_list, water_mask,
+            mask_dict, lyr_path, ref_y, ref_x, G, phase2range,
+            apply_tropo_correction, work_dir, median_height)
 
     # Handle additional layers (correction layers, mask layers, etc.)
     mask_layers = ['recommended_mask']
@@ -868,7 +878,7 @@ def prepare_timeseries(
         mask_layers.extend(['water_mask'])
 
     # Timeseries inversion residuals available for version >= 1.0
-    if track_version >= Version('1.0'):
+    if track_version >= Version('1.0') and mask_lyrs is True:
         mask_layers.extend(['timeseries_inversion_residuals'])
         phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
 
@@ -883,46 +893,86 @@ def prepare_timeseries(
     # Write mask and correlation layers to file
     for lyr in mask_layers:
         lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-        lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
-
-        # chunk_size = 25 if lyr == 'timeseries_inversion_residuals' else 50
+        if lyr == 'recommended_mask':
+            lyr_paths = [i.replace('short_wavelength_displacement', lyr)
+                         for i in shortwvl_files]
+        else:
+            lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
 
         # need to convert TS inversion from radians
         if lyr == 'timeseries_inversion_residuals':
             save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                        water_mask, date12_list, track_version, phase2range,
-                       mask_dict=mask_dict, n_workers=n_workers, chunk_size=chunk_size)
+                       mask_dict=mask_dict, n_workers=n_workers,
+                       chunk_size=chunk_size)
         else:
-            save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
+            if lyr == 'recommended_mask':
+                save_stack(lyr_fname, ds_name_dict_subset, meta, lyr_paths,
+                       water_mask, date12_list_subset, track_version, 1,
+                       mask_dict=mask_dict, n_workers=n_workers,
+                       chunk_size=chunk_size)
+            else:
+                save_stack(lyr_fname, ds_name_dict, meta, lyr_paths,
                        water_mask, date12_list, track_version, 1,
-                       mask_dict=mask_dict, n_workers=n_workers, chunk_size=chunk_size)
+                       mask_dict=mask_dict, n_workers=n_workers,
+                       chunk_size=chunk_size)
         all_outputs.append(lyr_fname)
 
     # apply epoch-based masking
     if apply_mask:
-        mskfile = os.path.join(os.path.dirname(outfile), 'recommended_mask.h5')
+        mskfile = os.path.join(os.path.dirname(outfile),
+            'recommended_mask.h5')
         if track_version >= Version('0.8'):
             # define chunk sizes
             chunks = {'time':-1, 'y':512, 'x':512}
 
+            # Define a dictionary that maps each mask index
+            # to a list of corresponding time indices in outfile
+            mask_to_time_mapping = {}
+            start_idx = 0  # Start from the first time index
+            for mask_idx, end_idx in enumerate(last_indices.values()):
+                mask_to_time_mapping[mask_idx+1] = list(
+                    range(start_idx, end_idx + 2)
+                )
+                start_idx = end_idx + 2  # Move to the next range
+
             # Open the datasets with xarray using defined chunks
             with xr.open_mfdataset(outfile, chunks=chunks) as ds_ts:
                 with xr.open_mfdataset(mskfile, chunks=chunks) as ds_msk:
-                    tsstack_ts = ds_ts['timeseries'] * ds_msk['timeseries']
+                    # Initialize an empty array to hold the expanded mask
+                    expanded_mask = xr.zeros_like(ds_ts['timeseries'])
+
+                    # Iterate over each mask layer
+                    # and apply it to the corresponding time indices
+                    for mask_idx, time_indices in (
+                        mask_to_time_mapping.items()
+                    ):
+                        chunk_msk = ds_msk['timeseries'][mask_idx]
+                        for time_step in time_indices:
+                            indexer = dict(phony_dim_1=time_step)
+                            expanded_mask.loc[indexer] = chunk_msk
+
+                    # Apply the expanded mask to the timeseries dataset
+                    tsstack_ts = ds_ts['timeseries'] * expanded_mask
 
             # Save the modified variable back to the HDF5 file
             with h5py.File(outfile, mode="r+") as h5file:
                 for start_c in range(0, num_date, chunk_size):
                     end_c = min(start_c + chunk_size, num_date)
                     # Compute only the current chunk
-                    chunk_ts = tsstack_ts.isel(phony_dim_1=slice(start_c, end_c)).values
-                    h5file['timeseries'][start_c:end_c, :, :] = chunk_ts
+                    chunk_ts = tsstack_ts.isel(
+                        phony_dim_1=slice(start_c, end_c)
+                    )
+                    h5file['timeseries'][
+                        start_c:end_c, :, :
+                    ] = chunk_ts.values
                     
                     # Clear memory
                     chunk_ts = None
                     gc.collect()
 
     return all_outputs, ref_meta
+
 
 def mintpy_prepare_geometry(outfile, geom_dir, metadata,
                             water_mask_file=None):
@@ -968,38 +1018,6 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     writefile.write(dsDict, outfile, metadata=meta)
     return outfile
 
-def chunked_nanmean(file_list, mask, chunk_size=50):
-    ''' averaging over chunks for handling memory efficiently '''
-    dat = load_gdal(file_list[0], masked=True) * mask
-    row, col = dat.shape  
-   
-    total_sum = np.zeros((row,col))
-    total_count = np.zeros((row,col))  
-
-    # process files in chunks
-    for i in tqdm(range(0, len(file_list), chunk_size)):
-        chunk_files = file_list[i:i+chunk_size]
-        chunk_data = []
-
-        # read data from each file in the chunk
-        for file in chunk_files:
-            chunk_data.append(load_gdal(file, masked=True) * mask)
-
-        # stack the chunk data
-        chunk = np.stack(chunk_data)
-      
-        # calculate sum and count for the chunk 
-        chunk_sum = np.nansum(chunk, axis=0)
-        chunk_count = np.sum(~np.isnan(chunk), axis=0)  
-
-        # update total sum and count
-        total_sum += chunk_sum
-        total_count += chunk_count
-
-    # calculate the mean
-    result = total_sum / total_count
-
-    return result
 
 def prepare_average_stack(outfile, stack, lyr_name, file_type, metadata,
     water_mask=None, n_workers=None):
@@ -1027,6 +1045,7 @@ def prepare_average_stack(outfile, stack, lyr_name, file_type, metadata,
     writefile.write(datasetDict, outfile, metadata=meta)
     
     return outfile
+
 
 def prepare_stack(
     out_dir,
@@ -1238,6 +1257,27 @@ def main(iargs=None):
     date12_list = _get_date_pairs(product_files)
     print(f"Found {len(product_files)} unwrapped files")
 
+    # track reference date change-over indices for each mini-stack
+    # first extract ref date values
+    refdate_list = [entry.split('_')[0] for entry in date12_list]
+    # Dictionary to store last indices before ref date changes
+    last_indices = {}
+    current_date1 = refdate_list[0]
+    for i, date1 in enumerate(refdate_list):
+        if date1 != current_date1:
+            # Store the last index before change
+            last_indices[current_date1] = i - 1
+            # Update to new date1
+            current_date1 = date1
+
+    # Capture the last group’s last index
+    last_indices[current_date1] = len(refdate_list) - 1
+
+    # get subset of short-wavelength files to sample for TS stack
+    shortwvl_file_subset = [filtered_files[i] for i in last_indices.values()]
+
+    print(shortwvl_file_subset)
+
     # track product version
     track_version = []
     for i in product_files:
@@ -1263,6 +1303,9 @@ def main(iargs=None):
     # append appropriate NETCDF prefixes
     unw_files = \
         [f'NETCDF:"{i}":{disp_lyr_name}' for i in product_files]
+    shortwvl_files = \
+        [f'NETCDF:"{i}":short_wavelength_displacement' 
+         for i in shortwvl_file_subset]
 
     # get geolocation info
     static_dir = Path(inps.meta_file)
@@ -1329,10 +1372,8 @@ def main(iargs=None):
     # capture alternate filename convention
     if static_files == []:
         allcaps_geometry = False
-        static_files = sorted(Path(static_dir).glob("*static_*.h5"))
 
     # translate input options
-    processor = "sweets"  # isce_utils.get_processor(inps.meta_file)
     # metadata
     meta_file = Path(inps.meta_file)
     if meta_file.is_dir():
@@ -1380,8 +1421,10 @@ def main(iargs=None):
     all_outputs, ref_meta = prepare_timeseries(
         outfile=og_ts_file,
         unw_files=unw_files,
+        shortwvl_files=shortwvl_files,
         track_version=track_version,
         metadata=meta,
+        last_indices=last_indices,
         water_mask_file=inps.water_mask_file,
         ref_lalo=inps.ref_lalo,
         corr_lyrs=inps.corr_lyrs,
@@ -1533,7 +1576,7 @@ def main(iargs=None):
         if inps.zero_mask is True:
             msk_file = os.path.join(os.path.dirname(ts_name),
                 'combined_msk.h5')
-            iargs = [stack_file, 'unwrapPhase', '-o', msk_file, '--nonzero']
+            iargs = [recommended_mask_file, '-o', msk_file, '--nonzero']
             generate_mask.main(iargs)
 
             # mask TS file, since reference_point adds offset back in masked field
