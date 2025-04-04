@@ -450,8 +450,8 @@ def main(iargs=None):
             dates = np.array(ts_date_list, dtype=np.string_)
             num_date = len(dates)
             pbase = np.zeros(num_date, dtype=np.float32)
-            row = int(meta['LENGTH'])
-            col = int(meta['WIDTH'])
+            row = int(ref_meta['LENGTH'])
+            col = int(ref_meta['WIDTH'])
             ds_name_dict = {
                 "date": [dates.dtype, (num_date,), dates],
                 "bperp": [np.float32, (num_date,), pbase],
@@ -459,7 +459,7 @@ def main(iargs=None):
             }
 
             # Initialize HDF5 file
-            writefile.layout_hdf5(ts_name, ds_name_dict, metadata=meta)
+            writefile.layout_hdf5(ts_name, ds_name_dict, metadata=ref_meta)
 
             # Initialize with zeros
             with h5py.File(ts_name, "r+") as f:
