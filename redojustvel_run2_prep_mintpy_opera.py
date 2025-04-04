@@ -564,8 +564,8 @@ def main(iargs=None):
         # update metadata field
         with h5py.File(ts_name, 'r') as f:
             ts_date_list = f['date'][:]
-            start_date = str(ts_date_list[0])
-            end_date = str(ts_date_list[-1])
+            start_date = str(int(ts_date_list[0]))
+            end_date = str(int(ts_date_list[-1]))
 
         meta["DATA_TYPE"] = 'float32'
         meta["DATE12"] =  start_date + '_' + end_date
