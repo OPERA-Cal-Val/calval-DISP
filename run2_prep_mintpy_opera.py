@@ -60,6 +60,7 @@ import gc
 # Third-party imports
 import asf_search as asf
 import h5py
+import netCDF4
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -77,7 +78,7 @@ warnings.filterwarnings("ignore")
 sys.path.append(str(Path(__file__).parent / "src"))
 
 # Local application/library-specific imports
-from mintpy.cli import generate_mask, mask
+from mintpy.cli import generate_mask, mask, dem_error
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils import utils as ut
@@ -252,8 +253,14 @@ def _create_parser():
     parser.add_argument(
         "--apply-mask",
         dest="apply_mask",
-        action="store_true",    # Will be False by default
+        action="store_true",
         help="Apply epoch based masking",
+    )
+    parser.add_argument(
+        "--dem-error",
+        dest="dem_error",
+        action="store_true",
+        help="Apply DEM-error correction",
     )
     parser.add_argument(
         "--n-workers",
@@ -669,16 +676,16 @@ def generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows, cols,
     work_dir, median_height):
     """Wrapper to generate TS h5 files"""
 
-    print(f"Writing data to HDF5 file {lyr_fname}")
-    writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
+    if lyr != 'perpendicular_baseline':
+        print(f"Writing data to HDF5 file {lyr_fname}")
+        writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
 
-    # Initialize with zeros
-    with h5py.File(lyr_fname, "a") as f:
-        print("Setting value at the first acquisition to ZERO")
-        f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
+        # Initialize with zeros
+        with h5py.File(lyr_fname, "a") as f:
+            print("Setting value at the first acquisition to ZERO")
+            f["timeseries"][0] = np.zeros((rows, cols), dtype=np.float32)
 
     prog_bar = ptime.progressBar(maxValue=num_date)
-
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         for chunk_start in range(1, num_date, chunk_size):
             chunk_end = min(chunk_start + chunk_size, num_date)
@@ -691,21 +698,12 @@ def generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows, cols,
             # Submit jobs
             future_to_idx = {}  # Map futures to their indices
             for i, date in enumerate(chunk_dates):
-                # Do not apply reference point to short wvl layer
-                if lyr == 'short_wavelength_displacement':
-                    future = executor.submit(
-                        compute_displacement_parallel,
-                        date, date_list, water_mask, mask_dict, lyr_path,
-                        rows, cols, None, None, G, phase2range,
-                        apply_tropo_correction, work_dir, median_height
-                    )
-                else:
-                    future = executor.submit(
-                        compute_displacement_parallel,
-                        date, date_list, water_mask, mask_dict, lyr_path,
-                        rows, cols, ref_y, ref_x, G, phase2range,
-                        apply_tropo_correction, work_dir, median_height
-                    )
+                future = executor.submit(
+                    compute_displacement_parallel,
+                    date, date_list, water_mask, mask_dict, lyr_path,
+                    rows, cols, ref_y, ref_x, G, phase2range,
+                    apply_tropo_correction, work_dir, median_height
+                )
                 future_to_idx[future] = i
 
             # Process completed futures
@@ -720,10 +718,15 @@ def generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows, cols,
                 except Exception as e:
                     print(f"Error processing date {chunk_dates[idx]}: "
                           f"{str(e)}")
-            
+
             # Write chunk to file
-            with h5py.File(lyr_fname, "a") as f:
-                f["timeseries"][chunk_start:chunk_end] = chunk_timeseries
+            if lyr == 'perpendicular_baseline':
+                with h5py.File(lyr_fname, "a") as f:
+                    chunk_timeseries = np.mean(chunk_timeseries, axis=(1, 2))
+                    f["bperp"][chunk_start:chunk_end] = chunk_timeseries
+            else:
+                with h5py.File(lyr_fname, "a") as f:
+                    f["timeseries"][chunk_start:chunk_end] = chunk_timeseries
                 
             # Clear chunk data from memory
             chunk_timeseries = None
@@ -791,8 +794,8 @@ def prepare_timeseries(
 
     # return TS parameters for short-wavelength layers
     (G_subset, date_pairs_subset, date_list_subset, date12_list_subset,
-     num_date_subset, cols_subset, rows_subset,
-     ds_name_dict_subset) = get_timeseries_parameters(shortwvl_files)
+    num_date_subset, cols_subset, rows_subset,
+    ds_name_dict_subset) = get_timeseries_parameters(shortwvl_files)
 
     # read water mask
     if water_mask_file is not None:
@@ -846,7 +849,7 @@ def prepare_timeseries(
         # generate TS file
         generate_timeseries_h5(lyr_fname, lyr, ds_name_dict_subset, meta,
             rows_subset, cols_subset, num_date_subset, chunk_size, n_workers,
-            date_list_subset, water_mask, mask_dict, lyr, ref_y, ref_x,
+            date_list_subset, water_mask, mask_dict, lyr, None, None,
             G_subset, phase2range, apply_tropo_correction, work_dir,
             median_height)
 
@@ -866,6 +869,15 @@ def prepare_timeseries(
             cols, num_date, chunk_size, n_workers, date_list, water_mask,
             mask_dict, lyr_path, ref_y, ref_x, G, phase2range,
             apply_tropo_correction, work_dir, median_height)
+
+        # pass bperp info to TS file
+        if ind == 0:
+            lyr = 'perpendicular_baseline'
+            lyr_path = f'/corrections/{lyr}'
+            generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows,
+                cols, num_date, chunk_size, n_workers, date_list, water_mask,
+                mask_dict, lyr_path, None, None, G, 1,
+                False, work_dir, median_height)
 
     # Handle additional layers (correction layers, mask layers, etc.)
     mask_layers = ['recommended_mask']
@@ -974,7 +986,7 @@ def prepare_timeseries(
     return all_outputs, ref_meta
 
 
-def mintpy_prepare_geometry(outfile, geom_dir, metadata,
+def mintpy_prepare_geometry(outfile, int_file, geom_dir, metadata,
                             water_mask_file=None):
     """Prepare the geometry file."""
     print('-' * 50)
@@ -1014,6 +1026,15 @@ def mintpy_prepare_geometry(outfile, geom_dir, metadata,
     up = np.sqrt(1 - east**2 - north**2)
     incidence_angle = np.rad2deg(np.arccos(up))
     dsDict['incidenceAngle'] = incidence_angle
+
+    # write out slant range distance
+    slant_range = netCDF4.Dataset(int_file, keepweakref=True)
+    slant_range = float(
+        slant_range.groups['metadata']['slant_range_mid_swath'][0]
+    )
+    slant_range = np.full_like(incidence_angle,
+        fill_value=slant_range, dtype=np.float32)
+    dsDict['slantRangeDistance'] = slant_range
 
     writefile.write(dsDict, outfile, metadata=meta)
     return outfile
@@ -1276,8 +1297,6 @@ def main(iargs=None):
     # get subset of short-wavelength files to sample for TS stack
     shortwvl_file_subset = [filtered_files[i] for i in last_indices.values()]
 
-    print(shortwvl_file_subset)
-
     # track product version
     track_version = []
     for i in product_files:
@@ -1392,6 +1411,11 @@ def main(iargs=None):
         nlks_x=inps.lks_x, nlks_y=inps.lks_y
     )
 
+    # prepare geometry file
+    geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
+    mintpy_prepare_geometry(geom_file, product_files[0], geom_dir=inps.geom_dir,
+        metadata=meta, water_mask_file=inps.water_mask_file)
+
     ncpus = len(psutil.Process().cpu_affinity())    # number of available CPUs
     if inps.n_workers:
         ncpus = inps.n_workers
@@ -1414,7 +1438,6 @@ def main(iargs=None):
 
     # prepare TS file
     og_ts_file = os.path.join(inps.out_dir, "timeseries.h5")
-    geom_file = os.path.join(inps.out_dir, "geometryGeo.h5")
     all_outputs = [og_ts_file]
     ref_meta = None
     # time-series (if inputs are multi-reference and outputs are for single-reference)
@@ -1443,16 +1466,21 @@ def main(iargs=None):
     create_reliability_mask(recommended_mask_file, meta,
         threshold_ratio=inps.reliability_threshold)
 
-    # prepare geometry file
-    mintpy_prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta,
-        water_mask_file=inps.water_mask_file)
-
     # generate velocity fit(s)
     ts_dict = {}
     ts_dict['velocity'] = og_ts_file
     if inps.shortwvl_lyrs is True:
         ts_dict['velocity_shortwvl'] = os.path.join(inps.out_dir,
             'short_wavelength_displacement.h5')
+
+    # apply DEM-error correction
+    if inps.dem_error is True:
+        # run DEM-error correction script
+        iargs = [og_ts_file, '-g', geom_file, '--num-worker', str(ncpus)]
+        dem_error.main(iargs)
+        # pass dem error file for velocity fit
+        ts_dict['velocity_demErr'] = os.path.join(inps.out_dir,
+            "timeseries_demErr.h5")
 
     for vel_name, ts_name in ts_dict.items():
         # first set variables
@@ -1587,7 +1615,8 @@ def main(iargs=None):
             iargs = [vel_file, '--mask', msk_file]
             mask.main(iargs)
 
-    print(f"Total processing time: {(time.time() - start_time)/60:.2f} minutes")
+    elapsed_time = (time.time() - start_time) / 60
+    print(f"Total processing time: {elapsed_time:.2f} minutes")
     print("Done.")
     return
 

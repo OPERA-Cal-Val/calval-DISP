@@ -413,6 +413,11 @@ def main(iargs=None):
     if os.path.exists(shortwvl_lyrs_path):
         ts_dict['velocity_shortwvl'] = shortwvl_lyrs_path
 
+    dem_error_path = os.path.join(inps.out_dir,
+        "timeseries_demErr.h5")
+    if os.path.exists(dem_error_path):
+        ts_dict['velocity_demErr'] = dem_error_path
+
     # check if files need to be truncated
     if inps.startDate is not None or inps.endDate is not None:
         for ts_name in ts_dict.values():
