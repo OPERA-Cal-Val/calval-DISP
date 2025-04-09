@@ -408,6 +408,7 @@ def main(iargs=None):
     # generate velocity fit(s)
     ts_dict = {}
     ts_dict['velocity'] = og_ts_file
+
     shortwvl_lyrs_path = os.path.join(inps.out_dir,
             'short_wavelength_displacement.h5')
     if os.path.exists(shortwvl_lyrs_path):
@@ -417,6 +418,16 @@ def main(iargs=None):
         "timeseries_demErr.h5")
     if os.path.exists(dem_error_path):
         ts_dict['velocity_demErr'] = dem_error_path
+
+    era5_corr_path = os.path.join(inps.out_dir,
+        "timeseries_ERA5.h5")
+    if os.path.exists(era5_corr_path):
+        ts_dict['velocity_ERA5'] = era5_corr_path
+
+    era5_demErr_corr_path = os.path.join(inps.out_dir,
+        "timeseries_ERA5_demErr.h5")
+    if os.path.exists(era5_demErr_corr_path):
+        ts_dict['velocity_ERA5_demErr'] = era5_demErr_corr_path
 
     # check if files need to be truncated
     if inps.startDate is not None or inps.endDate is not None:
