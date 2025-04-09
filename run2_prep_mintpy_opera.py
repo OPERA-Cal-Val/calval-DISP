@@ -1475,8 +1475,10 @@ def main(iargs=None):
 
     # apply DEM-error correction
     if inps.dem_error is True:
+        dem_error_file = os.path.join(inps.out_dir, 'demErr.h5')
         # run DEM-error correction script
-        iargs = [og_ts_file, '-g', geom_file, '--num-worker', str(ncpus)]
+        iargs = [og_ts_file, '-g', geom_file, '--num-worker', str(ncpus),
+            '--dem-err-file', dem_error_file]
         dem_error.main(iargs)
         # pass dem error file for velocity fit
         ts_dict['velocity_demErr'] = os.path.join(inps.out_dir,
