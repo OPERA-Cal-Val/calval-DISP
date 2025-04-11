@@ -78,7 +78,12 @@ warnings.filterwarnings("ignore")
 sys.path.append(str(Path(__file__).parent / "src"))
 
 # Local application/library-specific imports
-from mintpy.cli import generate_mask, mask, dem_error
+from mintpy.cli import (
+    generate_mask,
+    mask,
+    dem_error,
+    temporal_average,
+)
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils import utils as ut
@@ -1473,9 +1478,16 @@ def main(iargs=None):
     # generate velocity fit(s)
     ts_dict = {}
     ts_dict['velocity'] = og_ts_file
+
+    # if short wvl stack, take temporal average
     if inps.shortwvl_lyrs is True:
-        ts_dict['velocity_shortwvl'] = os.path.join(inps.out_dir,
+        shortwvl_ts = os.path.join(inps.out_dir,
             'short_wavelength_displacement.h5')
+        shortwvl_vel = os.path.join(inps.out_dir,
+            'velocity_shortwvl.h5')
+        iargs = [shortwvl_ts, '--dataset', 'timeseries',
+                 '-o', shortwvl_vel, '--update']
+        temporal_average.main(iargs)
 
     # apply DEM-error correction
     if inps.dem_error is True:
