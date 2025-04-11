@@ -1086,6 +1086,10 @@ def prepare_stack(
     meta = {key: value for key, value in metadata.items()}
     meta["FILE_TYPE"] = "ifgramStack"
 
+    print('Hardcode DEM error analysis and short wvl extraction')
+    inps.dem_error = True
+    inps.shortwvl_lyrs = True
+
     # get list of *.unw file
     num_pair = len(unw_files)
 
