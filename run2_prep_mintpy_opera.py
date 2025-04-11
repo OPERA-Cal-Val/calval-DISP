@@ -1091,10 +1091,6 @@ def prepare_stack(
     meta = {key: value for key, value in metadata.items()}
     meta["FILE_TYPE"] = "ifgramStack"
 
-    print('Hardcode DEM error analysis and short wvl extraction')
-    inps.dem_error = True
-    inps.shortwvl_lyrs = True
-
     # get list of *.unw file
     num_pair = len(unw_files)
 
@@ -1219,6 +1215,10 @@ def prepare_stack(
 def main(iargs=None):
     """Run the preparation functions."""
     inps = cmd_line_parse(iargs)
+
+    print('Hardcode DEM error analysis and short wvl extraction')
+    inps.dem_error = True
+    inps.shortwvl_lyrs = True
 
     start_time = time.time()
 
