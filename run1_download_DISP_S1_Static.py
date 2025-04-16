@@ -60,7 +60,7 @@ def createParser(iargs = None):
     parser.add_argument("--geomDir",
                         default='geometry', type=str, help='directory to store geometry files from static layers (default: geometry)')
     parser.add_argument("--burstDB-version", 
-                        default='0.8.0', type=str, help='burst DB version (default: 0.8.0)')
+                        default='0.9.0', type=str, help='burst DB version (default: 0.9.0)')
     parser.add_argument("--staticOnly",
                         action='store_true', help='download only static layer files without nc files')
     return parser.parse_args(args=iargs)
