@@ -1610,6 +1610,7 @@ def main(iargs=None):
             # write to file
             f["velocity"][:] = vel_arr
 
+        del ts_data, readers
         print("finished writing to HDF5 file: {}".format(vel_file))
 
         # generate mask file from unw phase field
