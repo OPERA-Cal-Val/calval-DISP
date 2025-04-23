@@ -407,27 +407,92 @@ def main(iargs=None):
 
     # generate velocity fit(s)
     ts_dict = {}
-    ts_dict['velocity'] = og_ts_file
+    vel_path = os.path.join(inps.out_dir,
+            'velocity.h5')
+    if inps.startDate is None and inps.endDate is None:
+        if not os.path.exists(vel_path):
+            ts_dict['velocity'] = og_ts_file
 
     shortwvl_lyrs_path = os.path.join(inps.out_dir,
             'short_wavelength_displacement.h5')
     if os.path.exists(shortwvl_lyrs_path):
-        ts_dict['velocity_shortwvl'] = shortwvl_lyrs_path
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_shortwvl.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_shortwvl'] = shortwvl_lyrs_path
 
     dem_error_path = os.path.join(inps.out_dir,
         "timeseries_demErr.h5")
     if os.path.exists(dem_error_path):
-        ts_dict['velocity_demErr'] = dem_error_path
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_demErr.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_demErr'] = dem_error_path
 
     era5_corr_path = os.path.join(inps.out_dir,
         "timeseries_ERA5.h5")
     if os.path.exists(era5_corr_path):
-        ts_dict['velocity_ERA5'] = era5_corr_path
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_ERA5.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                 ts_dict['velocity_ERA5'] = era5_corr_path
 
     era5_demErr_corr_path = os.path.join(inps.out_dir,
         "timeseries_ERA5_demErr.h5")
     if os.path.exists(era5_demErr_corr_path):
-        ts_dict['velocity_ERA5_demErr'] = era5_demErr_corr_path
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_ERA5_demErr.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_ERA5_demErr'] = era5_demErr_corr_path
+
+    ion_corr_path = os.path.join(inps.out_dir,
+        "timeseries_ion.h5")
+    if os.path.exists(ion_corr_path):
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_ion.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_ion'] = ion_corr_path
+
+    set_corr_path = os.path.join(inps.out_dir,
+        "timeseries_SET.h5")
+    if os.path.exists(set_corr_path):
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_set.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_set'] = set_corr_path
+
+    tot_corr_path = os.path.join(inps.out_dir,
+        "timeseries_ERA5_demErr_SET_ion.h5")
+    if os.path.exists(tot_corr_path):
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_totcorr.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_totcorr'] = tot_corr_path
+
+    iter_corr_path = os.path.join(inps.out_dir,
+        "timeseries_demErr_SET.h5")
+    if os.path.exists(iter_corr_path):
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_demErr_SET.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_demErr_SET'] = iter_corr_path
+
+    iter_corr_path = os.path.join(inps.out_dir,
+        "timeseries_demErr_SET_ion.h5")
+    if os.path.exists(iter_corr_path):
+        vel_path = os.path.join(inps.out_dir,
+                'velocity_demErr_SET_ion.h5')
+        if inps.startDate is None and inps.endDate is None:
+            if not os.path.exists(vel_path):
+                ts_dict['velocity_demErr_SET_ion'] = iter_corr_path
 
     # check if files need to be truncated
     if inps.startDate is not None or inps.endDate is not None:
@@ -622,6 +687,7 @@ def main(iargs=None):
             # write to file
             f["velocity"][:] = vel_arr
 
+        del ts_data, readers
         print("finished writing to HDF5 file: {}".format(vel_file))
 
         recommended_mask_file = os.path.join(inps.out_dir, 'recommended_mask.h5')
