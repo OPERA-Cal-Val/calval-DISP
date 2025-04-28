@@ -745,6 +745,7 @@ def prepare_timeseries(
     outfile,
     unw_files,
     shortwvl_files,
+    recmsk_files,
     track_version,
     metadata,
     last_indices,
@@ -800,6 +801,11 @@ def prepare_timeseries(
     (G_subset, date_pairs_subset, date_list_subset, date12_list_subset,
     num_date_subset, cols_subset, rows_subset,
     ds_name_dict_subset) = get_timeseries_parameters(shortwvl_files)
+
+    # return TS parameters for recommended mask layers
+    (G_recmsk, date_pairs_recmsk, date_list_recmsk, date12_list_recmsk,
+    num_date_recmsk, cols_recmsk, rows_recmsk,
+    ds_name_dict_recmsk) = get_timeseries_parameters(recmsk_files)
 
     # read water mask
     if water_mask_file is not None:
@@ -923,8 +929,8 @@ def prepare_timeseries(
                        chunk_size=chunk_size)
         else:
             if lyr == 'recommended_mask':
-                save_stack(lyr_fname, ds_name_dict_subset, meta, lyr_paths,
-                       water_mask, date12_list_subset, track_version, 1,
+                save_stack(lyr_fname, ds_name_dict_recmsk, meta, lyr_paths,
+                       water_mask, date12_list_recmsk, track_version, 1,
                        mask_dict=mask_dict, n_workers=n_workers,
                        chunk_size=chunk_size)
             else:
@@ -1303,7 +1309,21 @@ def main(iargs=None):
     last_indices[current_date1] = len(refdate_list) - 1
 
     # get subset of short-wavelength files to sample for TS stack
+    # first and last product for each mini-stack
     shortwvl_file_subset = [filtered_files[i] for i in last_indices.values()]
+    # first pass first date
+    shortwvl_file_subset = [filtered_files[0]]
+    # loop through n-1 reference changes
+    for i in list(last_indices.values())[:-1]:
+        shortwvl_file_subset.append(filtered_files[i])
+        shortwvl_file_subset.append(filtered_files[i+1])
+    # account for last reference date which has just one mini-stack product
+    shortwvl_file_subset.append(
+        filtered_files[list(last_indices.values())[-1]]
+    )
+
+    # get subset of recommended mask files to sample for TS stack
+    recmsk_file_subset = [filtered_files[i] for i in last_indices.values()]
 
     # track product version
     track_version = []
@@ -1333,6 +1353,9 @@ def main(iargs=None):
     shortwvl_files = \
         [f'NETCDF:"{i}":short_wavelength_displacement' 
          for i in shortwvl_file_subset]
+    recmsk_files = \
+        [f'NETCDF:"{i}":recommended_mask' 
+         for i in recmsk_file_subset]
 
     # get geolocation info
     static_dir = Path(inps.meta_file)
@@ -1453,6 +1476,7 @@ def main(iargs=None):
         outfile=og_ts_file,
         unw_files=unw_files,
         shortwvl_files=shortwvl_files,
+        recmsk_files=recmsk_files,
         track_version=track_version,
         metadata=meta,
         last_indices=last_indices,
