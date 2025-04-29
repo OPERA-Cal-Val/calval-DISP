@@ -915,10 +915,7 @@ def prepare_timeseries(
     # Write mask and correlation layers to file
     for lyr in mask_layers:
         lyr_fname = os.path.join(os.path.dirname(outfile), f'{lyr}.h5')
-        if lyr == 'recommended_mask':
-            lyr_paths = [i.replace('short_wavelength_displacement', lyr)
-                         for i in shortwvl_files]
-        else:
+        if lyr != 'recommended_mask':
             lyr_paths = [i.replace(disp_lyr_name, lyr) for i in unw_files]
 
         # need to convert TS inversion from radians
@@ -929,7 +926,7 @@ def prepare_timeseries(
                        chunk_size=chunk_size)
         else:
             if lyr == 'recommended_mask':
-                save_stack(lyr_fname, ds_name_dict_recmsk, meta, lyr_paths,
+                save_stack(lyr_fname, ds_name_dict_recmsk, meta, recmsk_files,
                        water_mask, date12_list_recmsk, track_version, 1,
                        mask_dict=mask_dict, n_workers=n_workers,
                        chunk_size=chunk_size)
