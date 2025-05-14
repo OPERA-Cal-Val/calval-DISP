@@ -46,7 +46,7 @@ def createParser(iargs = None):
     parser.add_argument("--frameID", 
                         required=True, type=str, help='frameID of DISP-S1 to download (e.g., 33039)')
     parser.add_argument("--version",
-                        default=1.0, type=float, help='version of DISP-S1 (default: 1.0)') 
+                        default=0.9, type=float, help='version of DISP-S1 (default: 0.9)') 
     parser.add_argument("--dispDir",
                         default='outputs', type=str, help='directory to download DISP-S1 (default: outputs)')
     parser.add_argument("--startDate", 
@@ -60,14 +60,25 @@ def createParser(iargs = None):
     parser.add_argument("--geomDir",
                         default='geometry', type=str, help='directory to store geometry files from static layers (default: geometry)')
     parser.add_argument("--burstDB-version", 
-                        default='0.9.0', type=str, help='burst DB version (default: 0.9.0)')
+                        default='0.7.0', type=str, help='burst DB version (default: 0.7.0)')
     parser.add_argument("--staticOnly",
                         action='store_true', help='download only static layer files without nc files')
     return parser.parse_args(args=iargs)
 
 def download_file(bucket_name, file_key, local_path):
     ''' download files from S3 bucket '''
-    s3 = boto3.client('s3', config=botocore.client.Config(signature_version=botocore.UNSIGNED))
+    s3 = boto3.client(
+        's3',
+        config=botocore.client.Config(
+            signature_version=botocore.UNSIGNED,
+            connect_timeout=600,
+            read_timeout=600,
+            retries={
+                'max_attempts': 10,
+                'mode': 'standard'
+            }
+        )
+    )
     if not os.path.exists(local_path):
         s3.download_file(bucket_name, file_key, local_path)
         print(f"File downloaded to {local_path}")
@@ -127,30 +138,92 @@ def main(inps):
     # Only process nc files if staticOnly is False
     if not inps.staticOnly:
         bucket_name = 'opera-pst-rs-pop1'       # aws S3 bucket of PST
-        if inps.version == 0.9:
-            bucket_name = 'opera-int-rs-pop1'
-        directory_name = f'products/DISP_S1'    # directory name where DISP-S1s locate
-
+        
         print('S3 bucket name: ', bucket_name)
-        print('DISP_S1 directory name in bucket: ', directory_name)
+        print('Product version: ', version)
+        
+        if version == 0.9:
+            keyword1 = 'F' + frameID
+            keyword2 = '_v' + str(version)
+            keyword3 = 'v' + str(version).split('.')[1]
+            directory_name = f'products/DISP_S1' + '/' + keyword3 + '/' + keyword1  # directory name where DISP-S1s locate
+            print('DISP_S1 directory name in bucket: ', directory_name)
+    
+            subdirectories = list_s3_directories(bucket_name, directory_name, keyword1=keyword1, keyword2=keyword2)  # search by frame ID
+            list_disp = [ dir.split('/')[-2] for dir in subdirectories]
+            list_disp = sorted(list_disp)
 
-        keyword1 = 'F' + frameID
-        keyword2 = '_v' + str(version)
+            unique_dict = {get_key(x): x for x in list_disp}
+            list_disp = list(unique_dict.values())
 
-        subdirectories = list_s3_directories(bucket_name, directory_name, keyword1=keyword1, keyword2=keyword2)  # search by frame ID
-        list_disp = [ dir.split('/')[-2] for dir in subdirectories]
-        list_disp = sorted(list_disp)
+            if not list_disp:  # If no directories found, list files instead
+                print("No directories found. Listing files directly...")
+                direct_file_mode = True  # Flag to indicate direct file storage
+                list_disp = list_s3_files(bucket_name, f'products/DISP_S1/{keyword3}/{keyword1}')
+            else:
+                direct_file_mode = False
+     
+            list_disp = filter_list_by_date_range(list_disp, startDate, endDate)       # filter by dates
 
-        unique_dict = {get_key(x): x for x in list_disp}
-        list_disp = list(unique_dict.values())
+            print('Number of DISP-S1 to download:', len(list_disp))
+            print('OPERA DISP-S1 data download started...')
+            # Prepare file paths before the ThreadPoolExecutor
+            file_mappings = {
+                select_disp: (
+                    f'products/DISP_S1/{keyword3}/{keyword1}/{select_disp}/{select_disp}.nc',
+                    f'{dispDir}/{select_disp}.nc'
+                ) if not direct_file_mode else (
+                    f'products/DISP_S1/{keyword3}/{keyword1}/{select_disp}',
+                    f'{dispDir}/{select_disp}'
+                )
+                for select_disp in list_disp
+            }
+            
+        else:
+            keyword1 = 'F' + frameID
+            keyword2 = '_v' + str(version)
+            keyword3 = None
+            directory_name = f'products/DISP_S1/'  # directory name where DISP-S1s locate
+            print('DISP_S1 directory name in bucket: ', directory_name)
 
-        list_disp = filter_list_by_date_range(list_disp, startDate, endDate)       # filter by dates
+            subdirectories = list_s3_directories(bucket_name, directory_name, keyword1=keyword1, keyword2=keyword2)  # search by frame ID
+            list_disp = [ dir.split('/')[-2] for dir in subdirectories]
+            list_disp = sorted(list_disp)
 
-        print('number of DISP-S1 to download: ', len(list_disp))
+            unique_dict = {get_key(x): x for x in list_disp}
+            list_disp = list(unique_dict.values())
+
+            if not list_disp:  # If no directories found, list files instead
+                print("No directories found. Listing files directly...")
+                direct_file_mode = True  # Flag to indicate direct file storage
+                list_disp = list_s3_files(bucket_name, f'products/DISP_S1')
+            else:
+                direct_file_mode = False
+
+            list_disp = filter_list_by_date_range(list_disp, startDate, endDate)       # filter by dates
+
+            print('Number of DISP-S1 to download:', len(list_disp))
+            print('OPERA DISP-S1 data download started...')
+
+            # Prepare file paths before the ThreadPoolExecutor
+            file_mappings = {
+                select_disp: (
+                    f'products/DISP_S1/{select_disp}/{select_disp}.nc',
+                    f'{dispDir}/{select_disp}.nc'
+                ) if not direct_file_mode else (
+                    f'products/DISP_S1/{select_disp}',
+                    f'{dispDir}/{select_disp}'
+                )
+                for select_disp in list_disp
+            }
 
         # Concurrent downloading of DISP-S1 nc files
         with ThreadPoolExecutor(max_workers=nWorkers) as executor:
-            future_to_file = {executor.submit(download_file, bucket_name, f'products/DISP_S1/{select_disp}/{select_disp}.nc', f'{dispDir}/{select_disp}.nc'): select_disp for select_disp in list_disp}
+            future_to_file = {
+                executor.submit(download_file, bucket_name, file_path, local_path): select_disp
+                for select_disp, (file_path, local_path) in file_mappings.items()
+            }
+
             for future in as_completed(future_to_file):
                 select_disp = future_to_file[future]
                 try:
@@ -158,6 +231,7 @@ def main(inps):
                 except Exception as exc:
                     print(f'{select_disp} generated an exception: {exc}')
 
+    print('OPERA DISP-S1 data downloaded, moving to static layers... ')
     # Access json matching bursts to frame IDs without downloading
     repo_zip_url = f'https://github.com/opera-adt/burst_db/releases/download/v{DB_ver}/opera-s1-disp-{DB_ver}-frame-to-burst.json.zip'
 
