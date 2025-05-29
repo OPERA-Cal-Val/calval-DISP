@@ -2,95 +2,81 @@
 
 Instructions derived and modified from https://github.com/nisar-solid/ATBD/blob/main/docs/installation.md 
 
-### 1. Install conda
+## 1. Install conda
 
+### Initial environment setup
+* Note, copy/replace '/u/data-drive/username/' with your own preferred installation path.
+
+### Setup conda
+We recommend using the Miniforge conda environment manager, which uses conda-forge as its default code repo:
 ```bash
-mkdir -p ~/tools; cd ~/tools
-
-# download, install and setup (mini/ana)conda
-# for Linux, use Miniconda3-latest-Linux-x86_64.sh
-# for macOS, opt 2: curl https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh -o Miniconda3-latest-MacOSX-x86_64.sh
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-bash Miniconda3-latest-MacOSX-x86_64.sh -b -p ~/tools/miniconda3
-~/tools/miniconda3/bin/conda init bash
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh -b -p miniforge
+miniforge/bin/mamba init bash
+conda activate base
 ```
 
-Close and restart the shell for changes to take effect.
-
+Rerun bash to refresh your environment:
 ```bash
-conda config --add channels conda-forge
-conda install git mamba --yes
+bash
 ```
 
-### 2. Install ATBD to `atbd` environment
-
-#### Download source code
-
+### Install main repository dependencies
 ```bash
-cd ~/tools
-git clone https://github.com/nisar-solid/ATBD.git
-git clone https://github.com/aria-tools/ARIA-tools.git
+cd /u/data-drive/username/
+git clone https://github.com/OPERA-Cal-Val/calval-DISP.git
+mamba env create -f calval-DISP/environment.yml
+conda activate calval_disp
+
+# add repo tools to your path
+export PATH="${PATH}:/u/data-drive/username/calval-DISP"
+
+# set cap to circumvent potential dolphin crash
+export XLA_PYTHON_CLIENT_MEM_FRACTION=".10"
 ```
 
-#### Create `atbd` environment and install pre-requisites
+## 2. Install other prerequisite packages
 
-```bash
-# create new environment
-# install dependencies with mamba by using the local `environment.yml` file
-mamba env create -f environment.yml
-```
-
-#### Source your installation
-
-Create an alias `load_atbd` in `~/.bash_profile` file for easy activation, _e.g._:
-
-```bash
-alias load_atbd='conda activate atbd; source ~/tools/ATBD/docs/config.rc'
-```
-
-#### Install MintPy from source (required to access stable version)
-
-Create an alias `load_atbd` in `~/.bash_profile` file for easy activation, _e.g._:
-
+### Install development version of MintPy
 ```bash
 git clone https://github.com/insarlab/MintPy.git
-python -m pip install -e MintPy
+mamba update --file MintPy/requirements.txt --name calval_disp
+export MINTPY_HOME=/u/data-drive/username/MintPy
+export PYTHONPATH=/u/data-drive/username/src
+export PATH="${PATH}:${MINTPY_HOME}/src/mintpy/cli"
 ```
 
-#### Install papermill and initiate kernel
+### Install development version of RAiDER
+```bash
+git clone https://github.com/dbekaert/RAiDER.git
+cd RAiDER
+mamba env update --file environment.yml --name calval_disp
+python -m pip install -e .
+cd ../
+```
+
+### Set PYTHONPATH
+```bash
+# set paths to prerequisite tools
+export PYTHONPATH="${PYTHONPATH}:/u/data-drive/username/calval-DISP"
+cd ../
+```
+
+### Install papermill and initiate kernel
 
 ```bash
 python3 -m pip install papermill
-python -m ipykernel install --user --name atbd
+python -m ipykernel install --user --name calval_disp
 ```
 
-#### Test the installation
+### Test the installation
 
 Run the following to test the installation:
 
 ```bash
-load_atbd
-ariaDownload.py -h
+# Display help for the download script (try using 'python' if issues occur)
+run1_download_DISP_S1_Static.py --h 
+
+# Display help for MintPy
 smallbaselineApp.py -h
-```
-
-### 3. Prep Notebook
-
-Open `DISP-S1_Requirement_Validation.ipynb` and add new section in the `sites` dictionary found in the 3rd cell
-which conforms to the parameters of your particular AO (e.g. unique name, geographic region, start/end date, reference GNSS station, etc).
-
-Also note that these parameters for particular region of interest may have already been established in the source notebook. So check that our first,
-making sure to of course adjust your start/end dates to ensure your series spans 4 years as per the requirement.
-
-
-### 4. Run Notebook
-
-For example, here is a sample run for the Central Valley, California case study for descending Sentinel-1 track 144.
-
-```bash
-#Args:
-# the name of your output notebook
-# site name (defined within the site dictionary of the input notebook)
-# output work directory
-papermill DISP-S1_Requirement_Validation.ipynb MYOUTPUT_DISP-S1_Requirement_Validation.ipynb -p site 'CentralValleyD144_4yr' -p work_dir 'D144' -k atbd
 ```
