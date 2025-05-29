@@ -98,6 +98,8 @@ Outlined below are the components of the validation workflow and how to run and 
 
 We outline a sample run for the Central Valley, California case study for descending Sentinel-1 track 042, which maps roughly to an OPERA frame ID of 11116.
 
+For a list of all Cal/Val sites and corresponding basic input parameters, refer to [DISP-S1_CalVal_sites.csv](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/validation_data/DISP-S1_CalVal_sites.csv).
+
 ### Step 0: Download GNSS measurements
 
 Using the [run0_gnss_download_screen.py](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/run0_gnss_download_screen.py) script, download prerequisite GNSS measurements needed for Cal/Val.
@@ -145,7 +147,7 @@ run1_download_DISP_S1_Static.py \
 
 Using the [run2_prep_mintpy_opera.py](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/run2_prep_mintpy_opera.py) script, extract displacement layers and prepare expected timeseries (`timeseries.h5`) and velocity estimate (`velocity.h5`) inputs for Cal/Val analysis. Outputs are extracted in MintPy-software compatible HDF5 file structures.
 
-To access the pre-defined reference points for each of the designated Cal/Val layers, refer to `/path/to/source/repo/calval-DISP/validation_data/DISP-S1_CalVal_sites.csv`.
+To access the pre-defined reference points for each of the designated Cal/Val layers, refer again to [DISP-S1_CalVal_sites.csv](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/validation_data/DISP-S1_CalVal_sites.csv).
 ```bash
 # Args:
 # -m   Folder for static layers/metadata
