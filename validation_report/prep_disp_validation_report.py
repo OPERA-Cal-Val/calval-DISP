@@ -230,7 +230,7 @@ def png_wrapper(png_dir,
     """ Loop through all input images"""
     # set relevant frame output paths
     frame_outputs = png_dir / frame / 'results'
-    frame_gnss_outputs = frame_outputs / 'GNSS-UNR_plots'
+    frame_gnss_outputs = frame_outputs / f'{frame}_plots'
 
     # count pages for a given frame ID
     # this includes 3 pages for the standard Calval plots
@@ -353,7 +353,7 @@ def csv_wrapper(input_csv,
     pg_num_list = []
     for i in frame_ids:
         # capture corresponding frame dir for GNSS vs InSAR comparison
-        frame_gnss_outputs = png_dir / i / 'results/GNSS-UNR_plots'
+        frame_gnss_outputs = png_dir / i / f'results/{i}_plots'
 
         # capture page number
         pg_num_list.append(frame_pg)
