@@ -221,6 +221,7 @@ def resize_img(source_file,
 def png_wrapper(png_dir,
                 frame,
                 output_pdf,
+                input_csv,
                 page_counter,
                 width,
                 height,
@@ -228,6 +229,10 @@ def png_wrapper(png_dir,
                 top_buffer=0,
                 font_color='black'):
     """ Loop through all input images"""
+    # Read the CSV data using Pandas
+    df = pd.read_csv(input_csv, dtype=str)
+    df = df[df['Frame'] == frame]
+
     # set relevant frame output paths
     frame_outputs = png_dir / frame / 'results'
     frame_gnss_outputs = frame_outputs / f'{frame}_plots'
@@ -249,44 +254,68 @@ def png_wrapper(png_dir,
                 for i in frame_outputs.glob(
                     'Secular_vel_disp_s1_vs_gnss_cartopy_site*.png'
                 )
-            ]
+            ][0]
+
         # query VA1 summary stats
         if i == 1:
-            header_txt = f'VA1 statistics for frame {frame}'
-            site_png = [
-                str(i)
-                for i in frame_outputs.glob(
-                    'VA1_secular_disp_s1-gnss_velocity_vs_distance_s*.png'
-                )
-            ]
-            tbl_png = [
-                str(i)
-                for i in frame_outputs.glob(
-                    'VA1_secular_disp_s1-gnss_velocity_vs_distance_t*.png'
-                )
-            ]
-            input_pngs = site_png + tbl_png
+            if (
+                (df['VA1 (Pass/Fail)'] == 'PASS').iloc[0]
+                or (df['VA1 (Pass/Fail)'] == 'FAIL').iloc[0]
+            ):
+                header_txt = f'VA1 statistics for frame {frame}'
+                site_png = [
+                    str(i)
+                    for i in frame_outputs.glob(
+                        'VA1_secular_disp_s1-gnss_velocity_vs_distance_s*.png'
+                    )
+                ][0]
+                tbl_png = [
+                    str(i)
+                    for i in frame_outputs.glob(
+                        'VA1_secular_disp_s1-gnss_velocity_vs_distance_t*.png'
+                    )
+                ][0]
+                input_pngs = site_png + tbl_png
+            else:
+                continue
+
         # query VA2 summary stats
         if i == 2:
-            header_txt = f'VA2 statistics for frame {frame}'
-            site_png = [
-                str(i)
-                for i in frame_outputs.glob(
-                    'VA2_secular_DISP-S1-only_vs_distance_s*.png'
-                )
-            ]
-            tbl_png = [
-                str(i)
-                for i in frame_outputs.glob(
-                    'VA2_secular_DISP-S1-only_vs_distance_t*.png'
-                )
-            ]
-            input_pngs = site_png + tbl_png
+            if (
+                (df['VA2 (Pass/Fail)'] == 'PASS').iloc[0]
+                or (df['VA2 (Pass/Fail)'] == 'FAIL').iloc[0]
+            ):
+                header_txt = f'VA2 statistics for frame {frame}'
+                site_png = [
+                    str(i)
+                    for i in frame_outputs.glob(
+                        'VA2_secular_DISP-S1-only_vs_distance_s*.png'
+                    )
+                ][0]
+                tbl_png = [
+                    str(i)
+                    for i in frame_outputs.glob(
+                        'VA2_secular_DISP-S1-only_vs_distance_t*.png'
+                    )
+                ][0]
+                input_pngs = site_png + tbl_png
+            else:
+                continue
+
         # query GNSS vs InSAR comparison plots
         if i > 2:
-            header_txt = f'GNSS vs InSAR comparison for frame {frame}'
-            gnss_plot_index = i - 3
-            input_pngs = [gnss_input_pngs[gnss_plot_index]]
+            if (
+                (df['VA1 (Pass/Fail)'] == 'PASS').iloc[0]
+                or (df['VA1 (Pass/Fail)'] == 'FAIL').iloc[0]
+            ):
+                header_txt = f'GNSS vs InSAR comparison for frame {frame}'
+                gnss_plot_index = i - 3
+                input_pngs = [gnss_input_pngs[gnss_plot_index]]
+                # skip if there are no GNSS vs InSAR plots
+                if input_pngs == []:
+                    continue
+            else:
+                continue
 
         # build temporary file
         temp_pdf = input_pngs[0].replace('.png', '_temp.pdf')
@@ -352,6 +381,9 @@ def csv_wrapper(input_csv,
     frame_pg = 2
     pg_num_list = []
     for i in frame_ids:
+        # get row corresponding to frame
+        df_frame = df[df['Frame'] == i]
+
         # capture corresponding frame dir for GNSS vs InSAR comparison
         frame_gnss_outputs = png_dir / i / f'results/{i}_plots'
 
@@ -361,8 +393,26 @@ def csv_wrapper(input_csv,
         # count pages for a given frame ID
         # this includes 3 pages for the standard Calval plots
         frame_pg += 3
-        # plus one page for each GNSS vs InSAR comparison
-        frame_pg += len([str(i) for i in frame_gnss_outputs.glob('*.png')])
+
+        # plus one page for each GNSS vs InSAR comparison if VA1 valid
+        if (
+            (df_frame['VA1 (Pass/Fail)'] == 'PASS').iloc[0]
+            or (df_frame['VA1 (Pass/Fail)'] == 'FAIL').iloc[0]
+        ):
+            frame_pg += len([
+                str(i) for i in frame_gnss_outputs.glob('*.png')
+            ])
+        # remove a page if VA1 not valid
+        else:
+            frame_pg -= 1
+
+        # remove a page if VA2 not valid
+        # plus one page for each GNSS vs InSAR comparison if VA1 valid
+        if not (
+            (df_frame['VA2 (Pass/Fail)'] == 'PASS').iloc[0]
+            or (df_frame['VA2 (Pass/Fail)'] == 'FAIL').iloc[0]
+        ):
+            frame_pg -= 1
 
     df['Page #'] = pg_num_list
 
@@ -409,37 +459,37 @@ def csv_wrapper(input_csv,
         (df['VA1 (Pass/Fail)'] == 'PASS').sum() 
         / va1_valid_total
     ) * 100
-    passing_rate_va1 = int(passing_rate_va1)
+    passing_rate_va1 = int(round(passing_rate_va1))
     va2_valid_total = (df['VA2 (Pass/Fail)'] == 'PASS').sum()
     va2_valid_total += (df['VA2 (Pass/Fail)'] == 'FAIL').sum()
     passing_rate_va2 = (
         (df['VA2 (Pass/Fail)'] == 'PASS').sum()
         / va2_valid_total
     ) * 100
-    passing_rate_va2 = int(passing_rate_va2)
+    passing_rate_va2 = int(round(passing_rate_va2))
     tbl_txt = f'{passing_rate_va1}% of validation data met VA1 requirement'
     add_text(output_pdf, tbl_txt, font_size=22,
-             bck_color='white', pos_x=76, pos_y=1246)
+             bck_color='white', pos_x=76, pos_y=1314)
     tbl_txt = f'{passing_rate_va2}% of validation data met VA2 requirement'
     add_text(output_pdf, tbl_txt, font_size=22,
-             bck_color='white', pos_x=76, pos_y=1280)
+             bck_color='white', pos_x=76, pos_y=1348)
     tbl_txt = (
         '* Frames do not meet temporal sampling requirement (80%) '
         'due to the absence of winter scenes.'
     )
     add_text(output_pdf, tbl_txt, font_size=22,
-             bck_color='white', pos_x=76, pos_y=1314)
+             bck_color='white', pos_x=76, pos_y=1382)
     tbl_txt = (
-        '** Frames do not have sufficient GNSS coverage to assess VA1 '
+        '** Frames do not have sufficient GNSS coverage to assess VA1.'
     )
     add_text(output_pdf, tbl_txt, font_size=22,
-             bck_color='white', pos_x=76, pos_y=1348)
+             bck_color='white', pos_x=76, pos_y=1416)
     tbl_txt = (
         '*** Frames excluded from VA2 requirement evaluation '
         'as there is significant non-linear motion.'
     )
     add_text(output_pdf, tbl_txt, font_size=22,
-             bck_color='white', pos_x=76, pos_y=1382)
+             bck_color='white', pos_x=76, pos_y=1450)
 
     return frame_ids, frame_pg
 
@@ -540,7 +590,7 @@ def prep_disp_report(inps):
     for frame in tqdm(frame_ids, desc="Processing frame"):
         print(frame)
         # loop through each frame png
-        page_counter = png_wrapper(inps.pdir, frame, output_pdf,
+        page_counter = png_wrapper(inps.pdir, frame, output_pdf, csvs_file,
                                    page_counter, width, height, resolution,
                                    top_buffer=0, font_color='black')
 
