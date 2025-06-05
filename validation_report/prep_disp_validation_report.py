@@ -403,14 +403,18 @@ def csv_wrapper(input_csv,
              bck_color='white', pos_x=40, pos_y=40)
 
     # Add caption
+    va1_valid_total = (df['VA1 (Pass/Fail)'] == 'PASS').sum()
+    va1_valid_total += (df['VA1 (Pass/Fail)'] == 'FAIL').sum()
     passing_rate_va1 = (
         (df['VA1 (Pass/Fail)'] == 'PASS').sum() 
-        / len(df['VA1 (Pass/Fail)'])
+        / va1_valid_total
     ) * 100
     passing_rate_va1 = int(passing_rate_va1)
+    va2_valid_total = (df['VA2 (Pass/Fail)'] == 'PASS').sum()
+    va2_valid_total += (df['VA2 (Pass/Fail)'] == 'FAIL').sum()
     passing_rate_va2 = (
         (df['VA2 (Pass/Fail)'] == 'PASS').sum()
-        / len(df['VA2 (Pass/Fail)'])
+        / va2_valid_total
     ) * 100
     passing_rate_va2 = int(passing_rate_va2)
     tbl_txt = f'{passing_rate_va1}% of validation data met VA1 requirement'
