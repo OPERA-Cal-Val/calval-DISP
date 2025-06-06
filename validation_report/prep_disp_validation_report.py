@@ -254,7 +254,7 @@ def png_wrapper(png_dir,
                 for i in frame_outputs.glob(
                     'Secular_vel_disp_s1_vs_gnss_cartopy_site*.png'
                 )
-            ][0]
+            ]
 
         # query VA1 summary stats
         if i == 1:
@@ -268,13 +268,13 @@ def png_wrapper(png_dir,
                     for i in frame_outputs.glob(
                         'VA1_secular_disp_s1-gnss_velocity_vs_distance_s*.png'
                     )
-                ][0]
+                ]
                 tbl_png = [
                     str(i)
                     for i in frame_outputs.glob(
                         'VA1_secular_disp_s1-gnss_velocity_vs_distance_t*.png'
                     )
-                ][0]
+                ]
                 input_pngs = site_png + tbl_png
             else:
                 continue
@@ -291,13 +291,13 @@ def png_wrapper(png_dir,
                     for i in frame_outputs.glob(
                         'VA2_secular_DISP-S1-only_vs_distance_s*.png'
                     )
-                ][0]
+                ]
                 tbl_png = [
                     str(i)
                     for i in frame_outputs.glob(
                         'VA2_secular_DISP-S1-only_vs_distance_t*.png'
                     )
-                ][0]
+                ]
                 input_pngs = site_png + tbl_png
             else:
                 continue
