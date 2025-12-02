@@ -18,9 +18,11 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
     -   [Step 2: Prepare timeseries and velocity estimate](#validation-step2)
     -   [Step 3: Generating non-linear displacement score map](#validation-step3)
     -   [Step 4: Perform VA1 and VA2 Cal/Val analysis](#validation-step4)
-    -   [Step 5: [OPTIONAL] Generate comprehensive GNSS vs InSAR comparison plots](#validation-step5)
-5. [References](#references)
-6. [Contributors](#contributors)
+    -   [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#validation-step5)
+5. [Validation Report Tool](#validation-report)
+6. [OPTIONAL dolphin Software Workflow](#dolphin-workflow)
+7. [References](#references)
+8. [Contributors](#contributors)
 
 ## Installation
 
@@ -190,6 +192,8 @@ run3_cal_non_linDisp_score.py
 ### Step 4: Perform VA1 and VA2 Cal/Val analysis
 
 The __[run4_DISP-S1_Secular_Requirement_Validation.ipynb](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/run4_DISP-S1_Secular_Requirement_Validation.ipynb)__ notebook contains a suite of functionality to evaluate the uncertainties associated with the validation requirements as outlined above. The notebook itself was adopted the NISAR team Algorithm Theoretical Basis Document (ATBD) __[notebook for secular motion](https://github.com/nisar-solid/ATBD/blob/main/methods/secular/Secular_Requirement_Validation.ipynb/)__.
+
+End-to-end runs for select sites can be found under the [calval_runs](https://github.com/OPERA-Cal-Val/calval-DISP/tree/main/calval_runs) folder.
 ```bash
 # Args:
 # site         DISP-S1 Frame ID prepended with 'F' (e.g. 'F11116')
@@ -237,6 +241,35 @@ papermill run5_plot_InSARvsGNSS_TS.ipynb run5_completed.ipynb \
 <br />
 <br />
 <br />
+
+## Validation Report Tool
+
+The automated generation of the formal validation report used to summarize our Cal/Val activities is supported by our [validation report script](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/validation_report/prep_disp_validation_report.py).
+
+To use it, run the Validation Workflow as outlined above through to completion for at least one track `FXXXX`.
+
+Your working directory should contain the Cal/Val results of all tracks you wish to summarize. E.g. `/path/to/working/directory` contains `F08622/results`, `F11115/results`, etc.
+
+To run this tool, simply launch it as so:
+```bash
+/path/to/source/repo/calval-DISP/validation_report/prep_disp_validation_report.py -p /path/to/working/directory --fname calval_report.pdf
+```
+
+Inspect the output `calval_report.pdf` to see the validation report summary.
+<br />
+<br />
+<br />
+<br />
+
+## [OPTIONAL] dolphin Software Workflow
+
+Explore the [dolphin workflow README.md and tools](https://github.com/OPERA-Cal-Val/calval-DISP/tree/main/dolphin_PSTworkflow) used to generated sample DISP products with the [dolphin software](https://github.com/isce-framework/dolphin), which is the core software used by OPERA to generate official DISP products.
+
+<br />
+<br />
+<br />
+<br />
+
 
 ## References
 
