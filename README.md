@@ -52,7 +52,7 @@ Three validation approaches will be performed separately depending on the Valida
 
 ### Validation approach 1 (VA1)
 
-Perform direct comparison of GNSS and InSAR is performed over deforming regions with dense GNSS networks including Central Valley in California, Hawaii, New York City, Hampton Roads in Virginia, Seattle, and Houston/Galveston. These validation sites are shown in Figure 1 and detailed in Table 1. Temporally decorrelated pixels on the InSAR data (i.e. temporal coherence ≤ 0.5) are removed and a water mask is applied during validation. An initial inspection of the GNSS time-series and the study area is done to select a stable reference area for all the InSAR data (i.e. reference point noise analysis). We perform root-mean-square error (RMSE) analysis (i.e. statistical analysis 3b above) to assess if we meet our DISP product requirements.
+Perform direct comparison of GNSS and InSAR is performed over deforming regions with dense GNSS networks including Central Valley in California, Hawaii, New York City, Hampton Roads in Virginia, Seattle, and Houston/Galveston. These validation sites are shown in Figure 1 and detailed in Table 1. Temporally decorrelated pixels on the InSAR data (i.e. average coherence ≤ 0.7) are removed and a water mask is applied during validation. An initial inspection of the GNSS time-series and the study area is done to select a stable reference area for all the InSAR data (i.e. reference point noise analysis). We perform root-mean-square error (RMSE) analysis (i.e. statistical analysis 3b above) to assess if we meet our DISP product requirements.
 
 <p align="center">
   <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/a32159f3-ae35-4a02-b174-83247a23cd60">
@@ -71,14 +71,14 @@ Perform direct comparison of GNSS and InSAR is performed over deforming regions 
 
 ### Validation approach 2 (VA2)
 
-InSAR residual analysis is conducted over a variety of negligibly deforming regions or in areas that are located outside the deformation field within the SAR footprint, including the Mojave Desert in California and Oklahoma. For negligibly deforming regions, we target those that have maintained coherence (i.e. temporal coherence > 0.5) PS and DS pixels within a frame. For a scene that includes a deformation field, we will mask first the deformation area as well as those that have temporal coherence ≤ 0.5 prior to residual analysis.
+InSAR residual analysis is conducted over a variety of negligibly deforming regions or in areas that are located outside the deformation field within the SAR footprint, including the Mojave Desert in California and Oklahoma. For negligibly deforming regions, we target those that have maintained coherence (i.e. average coherence > 0.7) PS and DS pixels within a frame. For a scene that includes a deformation field, we will mask first the deformation area as well as those that have average coherence ≤ 0.7 prior to residual analysis.
 
-The InSAR displacement rate residuals will be computed from a dense grid of randomly selected pairs of pixels to evaluate the accuracy as a function of distance. Since the selection of pixels is unbiased (or random), the inherent accuracy is evaluated not only on PS pixels but on a combined performance of both PS and DS within the SAR footprint. Note that this VA2 strategy supports and complements VA1 (e.g. length scales, L < 0.1 km ) and also removes the limitation in terms of the number of GNSS stations that can be used to validate the product requirements. We perform a variogram analysis as described above (i.e. statistical analysis 3a) to assess if we meet the DISP requirements (i.e. 3 mm per yr or better for Sentinel-1 and 5 mm per yr or better for NISAR, over length scales of 0.1 km < L < 50 km as reported in Table 2).
+The InSAR displacement rate residuals will be computed from a dense grid of randomly selected pairs of pixels to evaluate the accuracy as a function of distance. Since the selection of pixels is unbiased (or random), the inherent accuracy is evaluated not only on PS pixels but on a combined performance of both PS and DS within the SAR footprint. Note that this VA2 strategy supports and complements VA1 (e.g. length scales, L < 0.1 km ) and also removes the limitation in terms of the number of GNSS stations that can be used to validate the product requirements. We perform a variogram analysis as described above (i.e. statistical analysis 3a) to assess if we meet the DISP requirements (i.e. 5 mm per yr or better for both Sentinel-1 and NISAR, over length scales of 0.1 km < L < 50 km as reported in Table 2).
 
-The North America Sentinel-1 12 day coherence study previously done for NISAR (Figure 4.10) will be used as a reference guide to ensure that the selected negligibly deforming validation sites meet the temporal coherence requirement.
+The North America Sentinel-1 12 day coherence study previously done for NISAR (Figure 4.10) will be used as a reference guide to ensure that the selected negligibly deforming validation sites meet the average coherence requirement.
 
 <p align="center">
-  <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/27ec413a-73c0-4fe7-aa67-815b1bfc46ca">
+  <img width="90%" height="90%" src="https://github.com/OPERA-Cal-Val/calval-DISP/assets/13227405/18977635-2d1b-4443-8c17-63e058c128d5">
 </p>
 <B>Table 2.</B> Summary of OPERA DISP accuracy requirements.
 <br />
