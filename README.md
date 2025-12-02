@@ -21,8 +21,9 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
     -   [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#validation-step5)
 5. [Validation Report Tool](#validation-report)
 6. [OPTIONAL dolphin Software Workflow](#dolphin-workflow)
-7. [References](#references)
-8. [Contributors](#contributors)
+7. [Legacy Tools](#legacy-tools)
+8. [References](#references)
+9. [Contributors](#contributors)
 
 ## Installation
 
@@ -261,6 +262,7 @@ Inspect the output `calval_report.pdf` to see the validation report summary.
 <br />
 <br />
 
+
 ## [OPTIONAL] dolphin Software Workflow
 
 Explore the [dolphin workflow README.md and tools](https://github.com/OPERA-Cal-Val/calval-DISP/tree/main/dolphin_PSTworkflow) used to generated sample DISP products with the [dolphin software](https://github.com/isce-framework/dolphin), which is the core software used by OPERA to generate official DISP products.
@@ -270,6 +272,14 @@ Explore the [dolphin workflow README.md and tools](https://github.com/OPERA-Cal-
 <br />
 <br />
 
+## Legacy Tools
+
+Legacy tools can be found under the [legacy subdirectory](https://github.com/OPERA-Cal-Val/calval-DISP/tree/main/legacy).
+
+<br />
+<br />
+<br />
+<br />
 
 ## References
 
