@@ -5,22 +5,22 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
 
 1. [Installation](#installation)
 2. [General Procedures](#general-procedures)
-    -   [InSAR LOS velocity estimation](#insar-los-velocity-estimation)
-    -   [Validation data LOS velocity estimation](#validation-data-los-velocity-estimation)
-    -   [Statistical analyses](#statistical-analyses)
+    - [InSAR LOS velocity estimation](#insar-los-velocity-estimation)
+    - [Validation data LOS velocity estimation](#validation-data-los-velocity-estimation)
+    - [Statistical analyses](#statistical-analyses)
 3. [Validation Approaches](#validation-approaches)
-    -   [Validation approach 1 (VA1)](#validation-approach-1)
-    -   [Validation approach 2 (VA2)](#validation-approach-2)
-    -   [Validation approach 3 (VA3)](#validation-approach-3)
-4. [Running Validation Workflow Guide](#validation-guide)
-    -   [Step 0: Download GNSS measurements](#validation-step0)
-    -   [Step 1: Download DISP-S1 products, static layers, and geometry files](#validation-step1)
-    -   [Step 2: Prepare timeseries and velocity estimate](#validation-step2)
-    -   [Step 3: Generating non-linear displacement score map](#validation-step3)
-    -   [Step 4: Perform VA1 and VA2 Cal/Val analysis](#validation-step4)
-    -   [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#validation-step5)
-5. [Validation Report Tool](#validation-report)
-6. [OPTIONAL dolphin Software Workflow](#dolphin-workflow)
+    - [Validation approach 1 (VA1)](#validation-approach-1-va1)
+    - [Validation approach 2 (VA2)](#validation-approach-2-va2)
+    - [Validation approach 3 (VA3) TBD](#validation-approach-3-va3-tbd)
+4. [Running Validation Workflow Guide](#running-validation-workflow-guide)
+    - [Step 0: Download GNSS measurements](#step-0-download-gnss-measurements)
+    - [Step 1: Download DISP-S1 products, static layers, and geometry files](#step-1-download-disp-s1-products-static-layers-and-geometry-files)
+    - [Step 2: Prepare timeseries and velocity estimate](#step-2-prepare-timeseries-and-velocity-estimate)
+    - [Step 3: Generating non-linear displacement score map](#step-3-generating-non-linear-displacement-score-map)
+    - [Step 4: Perform VA1 and VA2 Cal/Val analysis](#step-4-perform-va1-and-va2-calval-analysis)
+    - [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#step-5-optional-generate-comprehensive-gnss-vs-insar-comparison-plots)
+5. [Validation Report Tool](#validation-report-tool)
+6. [OPTIONAL dolphin Software Workflow](#optional-dolphin-software-workflow)
 7. [Legacy Tools](#legacy-tools)
 8. [References](#references)
 9. [Contributors](#contributors)
@@ -36,9 +36,18 @@ A detailed installation on how to build a working environment can be found __[he
 ## General Procedures
 
 Summarized below are the general procedures to implement our validation approaches (outlined in the next section) including the two primary statistical analyses that are performed:
-1.	InSAR LOS velocity estimation: We estimate the long term line-of-sight rates and corresponding uncertainties by fitting a time-series function which includes a linear rate parameter across the displacement history, derived from the reconstructed displacement time-series using consecutive DISP products in time. Where needed, we may include additional complexities (e.g. Heaviside step, exponential or logarithmic function for coseismic and postseismic events/processes).
-2.	Validation data LOS velocity estimation: We project the independent Validation displacement data (e.g GNSS time-series) in the radar look direction and then estimate the velocity over the same period of time and with the same time-series models as from step 1. The GNSS time-series data will have its processing and noise corrections applied. As an example, the GNSS time-series data obtained from the University of Nevada, Reno (UNR) is corrected for instrument changes, ionospheric and tropospheric propagation delays, as well as solid earth tides [Blewitt et al., 2018].
-3.	Statistical analyses:  We mainly implement similar analyses as exemplified to assess if the OPERA L3 DISP product requirements are achieved.
+
+### InSAR LOS velocity estimation
+
+We estimate the long term line-of-sight rates and corresponding uncertainties by fitting a time-series function which includes a linear rate parameter across the displacement history, derived from the reconstructed displacement time-series using consecutive DISP products in time. Where needed, we may include additional complexities (e.g. Heaviside step, exponential or logarithmic function for coseismic and postseismic events/processes).
+
+### Validation data LOS velocity estimation
+
+We project the independent Validation displacement data (e.g GNSS time-series) in the radar look direction and then estimate the velocity over the same period of time and with the same time-series models as from step 1. The GNSS time-series data will have its processing and noise corrections applied. As an example, the GNSS time-series data obtained from the University of Nevada, Reno (UNR) is corrected for instrument changes, ionospheric and tropospheric propagation delays, as well as solid earth tides [Blewitt et al., 2018].
+
+### Statistical analyses
+
+We mainly implement similar analyses as exemplified to assess if the OPERA L3 DISP product requirements are achieved.
   - a)	Variogram analysis for the line-of-sight velocity residuals will be performed. Using the structure function, values at length scales 0.1 km < L < 50 km will be extracted and then compared to the OPERA L3 DISP requirements for validation.
   - b)	We calculate the mean and the standard deviation of the velocity residuals (e.g. perform scatter plot/RMSE analysis) and then assess if the OPERA L3 DISP requirements are satisfied.
 
@@ -226,7 +235,7 @@ papermill run4_DISP-S1_Secular_Requirement_Validation.ipynb run4_completed.ipynb
 <br />
 <br />
 
-### Step 5: [OPTIONAL] Generate comprehensive GNSS vs InSAR comparison plots
+### Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots
 
 The __[run5_plot_InSARvsGNSS_TS.ipynb](https://github.com/OPERA-Cal-Val/calval-DISP/blob/main/run5_plot_InSARvsGNSS_TS.ipynb)__ notebook expands upon the simple GNSS vs InSAR comparison plots of the notebook from step 4 with more comprehensive details, including histograms of relative differences. NOTE: This step is entirely optional, it is not necessary for validation.
 ```bash
