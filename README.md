@@ -48,7 +48,6 @@ For all the validation analyses, we report the accuracy that can be achieved wit
 <br />
 <br />
 
-
 ## Validation Approaches
 
 Three validation approaches will be performed separately depending on the Validation dataset are used to assess the DISP product requirements. Each validation approach is dubbed in this document as Validation Approach n (VAn) for n = 1, 2, 3, i.e. VA1, VA2, and VA3. The validation approaches are primarily differentiated based on the surface displacement occurring at the validation site (i.e. deforming or negligibly deforming) and/or the instrument used to validate the InSAR measurement (i.e. GNSS, corner reflectors, InSAR). Please refer to the __[OPERA validation plan](https://d2pn8kiwq2w21t.cloudfront.net/documents/OPERA_Validation_Plan.pdf) for a more exhaustive overview.
@@ -261,7 +260,6 @@ Inspect the output `calval_report.pdf` to see the validation report summary.
 <br />
 <br />
 <br />
-
 
 ## [OPTIONAL] dolphin Software Workflow
 
