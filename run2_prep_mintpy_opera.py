@@ -901,7 +901,7 @@ def prepare_timeseries(
         mask_layers.extend(['water_mask'])
 
     # Timeseries inversion residuals available for version >= 1.0
-    if track_version >= Version('1.0') and mask_lyrs is True:
+    if track_version >= Version('0.10') and mask_lyrs is True:
         mask_layers.extend(['phase_similarity'])
         mask_layers.extend(['shp_counts'])
         mask_layers.extend(['timeseries_inversion_residuals'])
