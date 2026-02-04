@@ -358,14 +358,16 @@ layer-specific section places its PNGs in a dedicated subdirectory, for example:
    water mask, inversion residuals, DEM error). Each section also launches the
    random-timeseries comparison routine and saves the figures under its
    respective subdirectory.
-3. **Section 5:** Compares the raw velocity, DEM-error-corrected velocity, and
-   short-wavelength velocity layers, enforcing common color scales across the
-   relevant products.
-4. **Section 4.0 + .i subsections:** After the initial height-map preview of the
+3. **Section 4.0 + .i subsections:** After the initial height-map preview of the
    selected points, each “Timeseries Comparisons” subsection regenerates the
    detailed plots using the same set of points. If a point becomes invalid for a
    given layer, a valid fallback pixel is picked automatically, logged, and
    highlighted on the layer-specific height map.
+4. **Section 5:** Compares the raw velocity, DEM-error-corrected velocity, and
+   short-wavelength velocity layers, enforcing common color scales across the
+   relevant products.
+5. **Section 6:** Range summary which aggregates the reported ranges to make it
+    easy to spot unexpected values across products.
 
 Review the executed notebook to verify:
 
