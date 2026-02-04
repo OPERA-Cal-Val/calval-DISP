@@ -294,8 +294,8 @@ Populate the following parameters when launching the suite with papermill:
 | `threshold_density` | Density threshold used for Section 3 (set to `0.9` by default). |
 | `list_lat_lon` | Either a list of `(lat, lon)` tuples, a WKT path, or an integer specifying how many random points to seed. |
 | `list_lat_lon_wkt_output` | Optional output path for the canonical list of selected points; defaults to `<parent_dir>/figures/Fxxxxx_selected_points.wkt`. |
-| `figures_dir` | Relative or absolute path to the output figures directory (defaults to `figures`). |
-| `pixel_radius`, `random_seed`, `timeseries_filename`, etc. | Advanced options used by the random-timeseries workflow (pre-populated in the parameter cell). |
+| `ref_lalo` | Specify spatial reference point as 'Lat Lon' and re-reference all inputs to this point (defaults to native reference point of inputs). |
+| `pixel_radius`, `random_seed`, `timeseries_filename`, `bins`, etc. | Advanced options used by the random-timeseries workflow (pre-populated in the parameter cell). |
 
 > **Tip:** If you pass an integer to `list_lat_lon`, the notebook will pick that
 > many valid pixels shared by both stacks and persist them back to WKT so the
