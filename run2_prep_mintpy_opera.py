@@ -680,7 +680,7 @@ def generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows, cols,
     work_dir, median_height):
     """Wrapper to generate TS h5 files"""
 
-    if lyr != 'perpendicular_baseline':
+    if lyr != 'perpendicular_baseline_avg':
         print(f"Writing data to HDF5 file {lyr_fname}")
         writefile.layout_hdf5(lyr_fname, ds_name_dict, metadata=meta)
 
@@ -724,7 +724,7 @@ def generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows, cols,
                           f"{str(e)}")
 
             # Write chunk to file
-            if lyr == 'perpendicular_baseline':
+            if lyr == 'perpendicular_baseline_avg':
                 with h5py.File(lyr_fname, "a") as f:
                     chunk_timeseries = np.mean(chunk_timeseries, axis=(1, 2))
                     f["bperp"][chunk_start:chunk_end] = chunk_timeseries
@@ -846,7 +846,8 @@ def prepare_timeseries(
     correction_layers = []
     if corr_lyrs is True:
         correction_layers = ['ionospheric_delay',
-                             'solid_earth_tide']
+                             'solid_earth_tide',
+                             'perpendicular_baseline']
         if track_version < Version('0.8'):
             correction_layers.append('tropospheric_delay')
 
@@ -882,8 +883,8 @@ def prepare_timeseries(
 
         # pass bperp info to TS file
         if ind == 0:
-            lyr = 'perpendicular_baseline'
-            lyr_path = f'/corrections/{lyr}'
+            lyr = 'perpendicular_baseline_avg'
+            lyr_path = f'/corrections/perpendicular_baseline'
             generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows,
                 cols, num_date, chunk_size, n_workers, date_list, water_mask,
                 mask_dict, lyr_path, None, None, G, 1,
@@ -900,7 +901,9 @@ def prepare_timeseries(
         mask_layers.extend(['water_mask'])
 
     # Timeseries inversion residuals available for version >= 1.0
-    if track_version >= Version('1.0') and mask_lyrs is True:
+    if track_version >= Version('0.10') and mask_lyrs is True:
+        mask_layers.extend(['phase_similarity'])
+        mask_layers.extend(['shp_counts'])
         mask_layers.extend(['timeseries_inversion_residuals'])
         phase2range = -1 * float(meta["WAVELENGTH"]) / (4.0 * np.pi)
 
@@ -1175,10 +1178,16 @@ def prepare_stack(
         'estimatedSpatialCoherence', meta, water_mask, n_workers=n_workers)
 
     # loop through and create files for temporal coherence
-    tempcoh_files = 'temporal_coherence'
+    tempcoh_file = 'temporal_coherence'
     tempcoh_fname = os.path.join(out_dir, 'temporalCoherence.h5')
-    prepare_average_stack(tempcoh_fname, stack, tempcoh_files,
+    prepare_average_stack(tempcoh_fname, stack, tempcoh_file,
         'temporalCoherence', meta, water_mask, n_workers=n_workers)
+
+    # loop through and create files for phase similarity
+    phssim_file = 'phase_similarity'
+    phssim_fname = os.path.join(out_dir, 'phaseSimilarity.h5')
+    prepare_average_stack(phssim_fname, stack, phssim_file,
+        'phaseSimilarity', meta, water_mask, n_workers=n_workers)
 
     if water_mask_file is not None:
         # determine whether the defined reference point is valid
@@ -1201,14 +1210,15 @@ def prepare_stack(
     # extract non-default mask layers
     if mask_lyrs is True:
         # loop through and create files for persistent scatterer
-        ps_files = 'persistent_scatterer_mask'
-        ps_fname = os.path.join(out_dir, 'persistent_scatterer_mask.h5')
-        prepare_average_stack(ps_fname, stack, ps_files,
+        ps_file = 'persistent_scatterer_mask'
+        ps_fname = os.path.join(out_dir, 'persistentScattererMask.h5')
+        prepare_average_stack(ps_fname, stack, ps_file,
             'persistentScatterer', meta, water_mask)
 
         # loop through and create files for connected components
+        cc_file = 'connected_component_labels'
         conn_fname = os.path.join(out_dir, 'connectedComponent.h5')
-        prepare_average_stack(conn_fname, stack, cc_files,
+        prepare_average_stack(conn_fname, stack, cc_file,
             'connectedComponent', meta, water_mask)
 
     return
@@ -1285,6 +1295,7 @@ def main(iargs=None):
             filtered_dict[prod_pair] = production_time
             filtered_files.append(i)
 
+    filtered_files.sort()
     product_files = filtered_files
     date12_list = _get_date_pairs(product_files)
     print(f"Found {len(product_files)} unwrapped files")
@@ -1307,20 +1318,21 @@ def main(iargs=None):
 
     # get subset of short-wavelength files to sample for TS stack
     # first and last product for each mini-stack
-    shortwvl_file_subset = [filtered_files[i] for i in last_indices.values()]
     # first pass first date
-    shortwvl_file_subset = [filtered_files[0]]
+    shortwvl_file_subset = [product_files[0]]
     # loop through n-1 reference changes
     for i in list(last_indices.values())[:-1]:
-        shortwvl_file_subset.append(filtered_files[i])
-        shortwvl_file_subset.append(filtered_files[i+1])
+        shortwvl_file_subset.append(product_files[i])
+        shortwvl_file_subset.append(product_files[i+1])
     # account for last reference date which has just one mini-stack product
     shortwvl_file_subset.append(
-        filtered_files[list(last_indices.values())[-1]]
+        product_files[list(last_indices.values())[-1]]
     )
+    shortwvl_file_subset = list(set(shortwvl_file_subset))
+    shortwvl_file_subset.sort()
 
     # get subset of recommended mask files to sample for TS stack
-    recmsk_file_subset = [filtered_files[i] for i in last_indices.values()]
+    recmsk_file_subset = [product_files[i] for i in last_indices.values()]
 
     # track product version
     track_version = []

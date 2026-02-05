@@ -439,7 +439,7 @@ def main(inps):
         "12640": [],  # Florida
         "18903": [
             "BKAP", "BSRY", "EDPP", "HCMN", "LJRN", "P582", "RAMT",
-            "THCP", "WORG", "CAVI", "COSO", "FOXG", "QHTP"
+            "THCP", "WORG", "CAVI", "COSO", "FOXG", "QHTP", 'CDMT'
         ],  # Ridgecrest / Rosamond
         "28486": ["OKAL", "TXCH", "TXWL", "OKAO", "OKCS", "OKER"],  # Oklahoma
         "33039": ["HOLE"],  # Hawaii
