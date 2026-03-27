@@ -876,10 +876,17 @@ def prepare_timeseries(
             all_outputs.append(lyr_fname)
 
         # generate TS file
-        generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows,
-            cols, num_date, chunk_size, n_workers, date_list, water_mask,
-            mask_dict, lyr_path, ref_y, ref_x, G, phase2range,
-            apply_tropo_correction, work_dir, median_height)
+        if lyr == 'perpendicular_baseline':
+            # suppress reference point
+            generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows,
+                cols, num_date, chunk_size, n_workers, date_list, water_mask,
+                mask_dict, lyr_path, None, None, G, phase2range,
+                apply_tropo_correction, work_dir, median_height)
+        else:
+            generate_timeseries_h5(lyr_fname, lyr, ds_name_dict, meta, rows,
+                cols, num_date, chunk_size, n_workers, date_list, water_mask,
+                mask_dict, lyr_path, ref_y, ref_x, G, phase2range,
+                apply_tropo_correction, work_dir, median_height)
 
         # pass bperp info to TS file
         if ind == 0:
@@ -1669,3 +1676,4 @@ def main(iargs=None):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+
