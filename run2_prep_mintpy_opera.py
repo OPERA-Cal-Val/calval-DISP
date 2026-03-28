@@ -1610,6 +1610,42 @@ def main(iargs=None):
         iargs = [prev_iterative_ts, set_stack, '-o', iterative_ts]
         diff.main(iargs)
 
+    # apply TROPO correction
+    tropo_stack = os.path.join(inps.out_dir, 'solid_earth_tide.h5')
+    try:
+        from mintpy.cli import tropo_opera
+        # updated iterative name
+        prev_iterative_ts = deepcopy(iterative_ts)
+        iterative_ts = iterative_ts[:-3] + "_TROPO.h5"
+        # pass correction file for velocity fit
+        ts_dict['velocity_TROPO'] = iterative_ts
+
+        # Define a directory to store the downloaded ASF OPERA ZTD cubes
+        opera_dir = os.path.join(inps.out_dir, 'OPERA_ZTD')
+    
+        # tropo_opera.main() handles the ASF download, Zenith-to-LOS interpolation,
+        # time-series generation, AND automatically calls diff.py internally to output the corrected file.
+        iargs = [
+            # 1. Input displacement file
+            '-f', prev_iterative_ts,
+            # 2. Geometry file (update this if your geometry variable is named differently)
+            '-g', inps.geom_file,
+            # 3. Directory to download/store OPERA cubes
+            '--dir', opera_dir,
+            # 4. Corrected output displacement file
+            '-o', iterative_ts
+        ]
+    
+        print(f"Estimating and applying OPERA ZTD tropospheric correction...")
+        tropo_opera.main(iargs)
+
+        # apply diff to TS
+        iargs = [prev_iterative_ts, tropo_stack, '-o', iterative_ts]
+        diff.main(iargs)
+    except ImportError:
+        print('Need to install MintPy PR https://github.com/insarlab/MintPy/pull/1473 to access MintPy TROPO workflow')
+        pass
+
     for vel_name, ts_name in ts_dict.items():
         # first set variables
         dolphin_ref_tif = os.path.join(inps.out_dir, 'dolphin_reference.tif')
