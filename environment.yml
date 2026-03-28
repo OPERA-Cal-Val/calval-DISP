@@ -20,7 +20,7 @@ dependencies:
   - matplotlib
   - nbdime
   - netcdf4
-  - numpy
+  - numpy<2.0
   - opera-utils
   - pandas
   - papermill
