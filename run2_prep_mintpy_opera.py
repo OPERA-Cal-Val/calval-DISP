@@ -59,6 +59,7 @@ import gc
 
 # Third-party imports
 import asf_search as asf
+from copy import deepcopy
 import h5py
 import netCDF4
 import networkx as nx
@@ -82,6 +83,7 @@ from mintpy.cli import (
     generate_mask,
     mask,
     dem_error,
+    diff,
 )
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
@@ -1514,6 +1516,9 @@ def main(iargs=None):
     create_reliability_mask(recommended_mask_file, meta,
         threshold_ratio=inps.reliability_threshold)
 
+    # define TS path to be used to apply iterative corrections to
+    iterative_ts = os.path.join(inps.out_dir, "timeseries.h5")
+
     # generate velocity fit(s)
     ts_dict = {}
     ts_dict['velocity'] = og_ts_file
@@ -1525,6 +1530,51 @@ def main(iargs=None):
 
     # apply DEM-error correction
     if inps.dem_error is True:
+        # add bperp layers to geom file
+        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5')
+        if os.path.exists(bperp_file):
+            # Open bperp file in 'Read' mode and geometry file in 'Append' mode
+            with (
+                h5py.File(bperp_file, 'r') as f_ts,
+                h5py.File(geom_file, 'a') as f_geom,
+            ):
+                # Read the 'date' dataset
+                # MintPy natively stores dates as byte strings (|S8)
+                # so we must decode them to utf-8 strings
+                dates_bytes = f_ts['date'][:]
+                dates_str = [d.decode('utf-8') for d in dates_bytes]
+                
+                # Iterate through your target dates to extract and append
+                for idx, t_date in enumerate(dates_str):
+
+                    # Read the 2D slice from the 3D 'timeseries' cube at the matched index
+                    # The timeseries dataset is structured as (num_dates, length, width)
+                    data_slice = f_ts['timeseries'][idx, :, :]
+
+                    # Define the new layer name
+                    dset_name = f'bperp-{t_date}'
+
+                    # HDF5 does not allow overwriting directly by same name
+                    # without deletion first.
+                    # Check if dataset already exists to avoid a ValueError.
+                    if dset_name in f_geom:
+                        print(f"Dataset '{dset_name}' already exists in "
+                              f"{geom_file}. Overwriting..."
+                        )
+                        del f_geom[dset_name]
+
+                    # Append the 2D array as a new dataset in the geometry file
+                    # We explicitly pass float32 and 'lzf' compression as this is the MintPy standard
+                    f_geom.create_dataset(
+                        dset_name, 
+                        data=data_slice, 
+                        dtype='float32',
+                        compression='lzf'
+                    )
+                    print(f"Successfully extracted bperp date {t_date} "
+                        f"and appended '{dset_name}' to {geom_file}"
+                    )
+
         dem_error_file = os.path.join(inps.out_dir, 'demErr.h5')
         # run DEM-error correction script
         iargs = [og_ts_file, '-g', geom_file, '--num-worker', str(ncpus),
@@ -1533,6 +1583,32 @@ def main(iargs=None):
         # pass dem error file for velocity fit
         ts_dict['velocity_demErr'] = os.path.join(inps.out_dir,
             "timeseries_demErr.h5")
+        # updated iterative name
+        iterative_ts = iterative_ts[:-3] + "_demErr.h5"
+
+    # apply iono correction
+    iono_stack = os.path.join(inps.out_dir, 'ionospheric_delay.h5')
+    if os.path.exists(iono_stack):
+        # updated iterative name
+        prev_iterative_ts = deepcopy(iterative_ts)
+        iterative_ts = iterative_ts[:-3] + "_iono.h5"
+        # pass correction file for velocity fit
+        ts_dict['velocity_iono'] = iterative_ts
+        # apply diff to TS
+        iargs = [prev_iterative_ts, iono_stack, '-o', iterative_ts]
+        diff.main(iargs)
+
+    # apply SET correction
+    set_stack = os.path.join(inps.out_dir, 'solid_earth_tide.h5')
+    if os.path.exists(set_stack):
+        # updated iterative name
+        prev_iterative_ts = deepcopy(iterative_ts)
+        iterative_ts = iterative_ts[:-3] + "_SET.h5"
+        # pass correction file for velocity fit
+        ts_dict['velocity_SET'] = iterative_ts
+        # apply diff to TS
+        iargs = [prev_iterative_ts, set_stack, '-o', iterative_ts]
+        diff.main(iargs)
 
     for vel_name, ts_name in ts_dict.items():
         # first set variables
