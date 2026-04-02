@@ -1596,7 +1596,8 @@ def main(iargs=None):
     # apply DEM-error correction
     if inps.dem_error is True:
         # add bperp layers to geom file
-        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5')
+        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5') #!#
+        #!#bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline_REMOVEWHENBPERPFIXED.h5') #!#
         if os.path.exists(bperp_file):
             # Open bperp file in 'Read' mode and geometry file in 'Append' mode
             with (
@@ -1632,7 +1633,7 @@ def main(iargs=None):
                     dtype='|S8'
                 )
                 print(f"Successfully extracted bperp dates "
-                      f"and appended '{dset_name}' to {geom_file}"
+                      f"and appended them to {geom_file}"
                 )
 
         dem_error_file = os.path.join(inps.out_dir, 'demErr.h5')
