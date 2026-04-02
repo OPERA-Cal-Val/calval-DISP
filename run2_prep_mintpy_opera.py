@@ -84,6 +84,8 @@ from mintpy.cli import (
     mask,
     dem_error,
     diff,
+    timeseries2velocity,
+    save_gdal,
 )
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
@@ -288,6 +290,23 @@ def _create_parser():
         default=50,
         help="Chunk size for memory-efficient parallel processing:"
               "the larger it is, the faster it gets, but it also increases memory risk."
+    )
+    parser.add_argument(
+        "--mintpy_inv",
+        dest="mintpy_inv",
+        action="store_true",
+        help="Use MintPy inversion workflow to get velocity fits. "
+             "This option natively supports periodic + "
+             "step function fitting. "
+             "Default: Use dolphin utils"
+    )
+    parser.add_argument(
+        "--step-dates",
+        dest="step_dates",
+        type=str,
+        default=None,
+        help="Specify dates of EQ(s) in space-delimited, YYYYMMDD format. "
+             "Only compatible with --mintpy_inv mode."
     )
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
@@ -1237,6 +1256,21 @@ def main(iargs=None):
     """Run the preparation functions."""
     inps = cmd_line_parse(iargs)
 
+    # pass step date(s), if specified
+    if inps.step_dates is not None:
+        step_dates = inps.step_dates.split()
+        step_dates = [int(i) for i in step_dates]
+        step_dates.sort()
+        print(
+            "Specified TS steps for the following times: "
+            f"{step_dates}"
+        )
+        print(
+            "Enforcing --mintpy-inv True since that workflow is "
+            "compatible with step time functions"
+        )
+        inps.mintpy_inv = True
+
     print('Hardcode DEM error analysis and short wvl extraction')
     inps.dem_error = True
     inps.shortwvl_lyrs = True
@@ -1267,6 +1301,19 @@ def main(iargs=None):
             if sec_date >= startDate:
                 filtered_files.append(i)
         product_files = filtered_files
+        # check if step date(s) aren't outside of temporal span
+        bad_steps = []
+        if inps.step_dates is not None:
+            for i in step_dates:
+                if i <= startDate:
+                    bad_steps.append(i)
+            # filter out dates outside of scope
+            if bad_steps != []:
+                print(
+                    f'Discarded specified step date(s) {bad_steps} that are '
+                    f'before the specified start date {inps.startDate}'
+                )
+                step_dates = [i for i in step_dates if i not in bad_steps]
 
     if inps.endDate is not None:
         endDate = int(inps.endDate)
@@ -1276,6 +1323,23 @@ def main(iargs=None):
             if sec_date <= endDate:
                 filtered_files.append(i)
         product_files = filtered_files
+        # check if step date(s) aren't outside of temporal span
+        bad_steps = []
+        if inps.step_dates is not None:
+            for i in step_dates:
+                if i >= endDate:
+                    bad_steps.append(i)
+            # filter out dates outside of scope
+            if bad_steps != []:
+                print(
+                    f'Discarded specified step date(s) {bad_steps} that are '
+                    f'after the specified end date {inps.endDate}'
+                )
+                step_dates = [i for i in step_dates if i not in bad_steps]
+
+    # set final step array
+    if inps.step_dates is not None:
+        step_dates = " ".join(map(str, step_dates))
 
     # filter out duplicate products
     str_list = [Path(f).stem for f in product_files]
@@ -1521,7 +1585,8 @@ def main(iargs=None):
 
     # generate velocity fit(s)
     ts_dict = {}
-    ts_dict['velocity'] = og_ts_file
+    vel_basename = 'velocity'
+    ts_dict[vel_basename] = og_ts_file
 
     # if short wvl stack, take temporal average
     if inps.shortwvl_lyrs is True:
@@ -1538,42 +1603,37 @@ def main(iargs=None):
                 h5py.File(bperp_file, 'r') as f_ts,
                 h5py.File(geom_file, 'a') as f_geom,
             ):
-                # Read the 'date' dataset
-                # MintPy natively stores dates as byte strings (|S8)
-                # so we must decode them to utf-8 strings
-                dates_bytes = f_ts['date'][:]
-                dates_str = [d.decode('utf-8') for d in dates_bytes]
-                
-                # Iterate through your target dates to extract and append
-                for idx, t_date in enumerate(dates_str):
-
-                    # Read the 2D slice from the 3D 'timeseries' cube at the matched index
-                    # The timeseries dataset is structured as (num_dates, length, width)
-                    data_slice = f_ts['timeseries'][idx, :, :]
-
-                    # Define the new layer name
-                    dset_name = f'bperp-{t_date}'
-
-                    # HDF5 does not allow overwriting directly by same name
-                    # without deletion first.
-                    # Check if dataset already exists to avoid a ValueError.
-                    if dset_name in f_geom:
-                        print(f"Dataset '{dset_name}' already exists in "
-                              f"{geom_file}. Overwriting..."
-                        )
-                        del f_geom[dset_name]
-
-                    # Append the 2D array as a new dataset in the geometry file
-                    # We explicitly pass float32 and 'lzf' compression as this is the MintPy standard
-                    f_geom.create_dataset(
-                        dset_name, 
-                        data=data_slice, 
-                        dtype='float32',
-                        compression='lzf'
+                # 1. Write the 3D 'bperp' cube
+                if 'bperp' in f_geom:
+                    print(
+                        f"Dataset 'bperp' already exists in "
+                        f"{geom_file}. Overwriting..."
                     )
-                    print(f"Successfully extracted bperp date {t_date} "
-                        f"and appended '{dset_name}' to {geom_file}"
-                    )
+                    del f_geom['bperp']
+
+                # Read entire 3D cube at once and write it
+                bperp_cube = f_ts['timeseries'][:]
+                f_geom.create_dataset(
+                    'bperp',
+                    data=bperp_cube,
+                    dtype='float32',
+                    compression='lzf'
+                )
+
+                # 2. Write the 1D 'date' array
+                if 'date' in f_geom:
+                    del f_geom['date']
+
+                # Read byte-string date array and copy it over
+                date_array = f_ts['date'][:]
+                f_geom.create_dataset(
+                    'date',
+                    data=date_array,
+                    dtype='|S8'
+                )
+                print(f"Successfully extracted bperp dates "
+                      f"and appended '{dset_name}' to {geom_file}"
+                )
 
         dem_error_file = os.path.join(inps.out_dir, 'demErr.h5')
         # run DEM-error correction script
@@ -1581,7 +1641,8 @@ def main(iargs=None):
             '--dem-err-file', dem_error_file]
         dem_error.main(iargs)
         # pass dem error file for velocity fit
-        ts_dict['velocity_demErr'] = os.path.join(inps.out_dir,
+        vel_basename += '_demErr'
+        ts_dict[vel_basename] = os.path.join(inps.out_dir,
             "timeseries_demErr.h5")
         # updated iterative name
         iterative_ts = iterative_ts[:-3] + "_demErr.h5"
@@ -1593,7 +1654,8 @@ def main(iargs=None):
         prev_iterative_ts = deepcopy(iterative_ts)
         iterative_ts = iterative_ts[:-3] + "_iono.h5"
         # pass correction file for velocity fit
-        ts_dict['velocity_iono'] = iterative_ts
+        vel_basename += '_iono'
+        ts_dict[vel_basename] = iterative_ts
         # apply diff to TS
         iargs = [prev_iterative_ts, iono_stack, '-o', iterative_ts]
         diff.main(iargs)
@@ -1605,20 +1667,21 @@ def main(iargs=None):
         prev_iterative_ts = deepcopy(iterative_ts)
         iterative_ts = iterative_ts[:-3] + "_SET.h5"
         # pass correction file for velocity fit
-        ts_dict['velocity_SET'] = iterative_ts
+        vel_basename += '_SET'
+        ts_dict[vel_basename] = iterative_ts
         # apply diff to TS
         iargs = [prev_iterative_ts, set_stack, '-o', iterative_ts]
         diff.main(iargs)
 
     # apply TROPO correction
-    tropo_stack = os.path.join(inps.out_dir, 'solid_earth_tide.h5')
     try:
         from mintpy.cli import tropo_opera
         # updated iterative name
         prev_iterative_ts = deepcopy(iterative_ts)
         iterative_ts = iterative_ts[:-3] + "_TROPO.h5"
         # pass correction file for velocity fit
-        ts_dict['velocity_TROPO'] = iterative_ts
+        vel_basename += '_TROPO'
+        ts_dict[vel_basename] = iterative_ts
 
         # Define a directory to store the downloaded ASF OPERA ZTD cubes
         opera_dir = os.path.join(inps.out_dir, 'OPERA_ZTD')
@@ -1629,7 +1692,7 @@ def main(iargs=None):
             # 1. Input displacement file
             '-f', prev_iterative_ts,
             # 2. Geometry file (update this if your geometry variable is named differently)
-            '-g', inps.geom_file,
+            '-g', geom_file,
             # 3. Directory to download/store OPERA cubes
             '--dir', opera_dir,
             # 4. Corrected output displacement file
@@ -1639,9 +1702,6 @@ def main(iargs=None):
         print(f"Estimating and applying OPERA ZTD tropospheric correction...")
         tropo_opera.main(iargs)
 
-        # apply diff to TS
-        iargs = [prev_iterative_ts, tropo_stack, '-o', iterative_ts]
-        diff.main(iargs)
     except ImportError:
         print('Need to install MintPy PR https://github.com/insarlab/MintPy/pull/1473 to access MintPy TROPO workflow')
         pass
@@ -1656,113 +1716,128 @@ def main(iargs=None):
         num_threads = 6
         block_shape = (256, 256)
 
-        # extract one product to serve as a reference file
-        ds = gdal.Translate(dolphin_ref_tif, unw_files[0])
-        ds = None
+        # proceed with inversion through MintPy
+        if inps.mintpy_inv is True:
+            iargs = [ts_name, '-o', vel_file, '--periodic', '1.0 0.5']
+            if inps.step_dates is not None:
+                iargs += ['--step', step_dates]
+            timeseries2velocity.main(iargs)
+            # extract tif
+            iargs = [vel_file, '-d', 'velocity', '-o',
+                     dolphin_vel_file, '--zm']
+            if inps.water_mask_file is not None:
+                iargs += ['-m', inps.water_mask_file]
+            save_gdal.main(iargs)
 
-        # get list of times WRT to the reference time
-        # and also pass the TS data
-        with h5py.File(ts_name, 'r') as f:
-            ts_date_list = f['date'][:]
-            ts_data = f['timeseries'][:]
+        else:
+            # extract one product to serve as a reference file
+            ds = gdal.Translate(dolphin_ref_tif, unw_files[0])
+            ds = None
 
-        x_arr = [
-            dt.strptime(
-                date.decode('utf-8'), '%Y%m%d'
+            # get list of times WRT to the reference time
+            # and also pass the TS data
+            with h5py.File(ts_name, 'r') as f:
+                ts_date_list = f['date'][:]
+                ts_data = f['timeseries'][:]
+
+            x_arr = [
+                dt.strptime(
+                    date.decode('utf-8'), '%Y%m%d'
+                )
+                for date in ts_date_list
+            ]
+            x_arr = datetime_to_float(x_arr)
+
+            # initiate dolphin file object
+            writer = BackgroundRasterWriter(dolphin_vel_file,
+                like_filename=dolphin_ref_tif)
+
+            # run dolphin velocity fitting algorithm in blocks
+            def read_and_fit(
+                readers: Sequence[HDF5StackReader],
+                rows: slice, cols: slice
+            ) -> tuple[np.ndarray, slice, slice]:
+
+                # Only use the cor_reader if it's the same shape as the unw_reader
+                if len(readers) == 2:
+                    unw_reader, cor_reader = readers
+                    unw_stack = unw_reader[:, rows, cols]
+                    weights = cor_reader[:, rows, cols]
+                    cor_threshold = 0.4
+                    weights[weights < cor_threshold] = 0
+                else:
+                    unw_stack = readers[0][:, rows, cols]
+                    weights = None
+
+                # Fit a line to each pixel with weighted least squares
+                return (
+                    estimate_velocity(
+                        x_arr=x_arr,
+                        unw_stack=unw_stack,
+                        weight_stack=weights
+                    ),
+                    rows,
+                    cols,
+                )
+
+            readers = [ts_data]
+            process_blocks(
+                readers=readers,
+                writer=writer,
+                func=read_and_fit,
+                block_shape=block_shape,
+                num_threads=num_threads,
             )
-            for date in ts_date_list
-        ]
-        x_arr = datetime_to_float(x_arr)
 
-        # initiate dolphin file object
-        writer = BackgroundRasterWriter(dolphin_vel_file,
-            like_filename=dolphin_ref_tif)
+            writer.notify_finished()
 
-        # run dolphin velocity fitting algorithm in blocks
-        def read_and_fit(
-            readers: Sequence[HDF5StackReader],
-            rows: slice, cols: slice
-        ) -> tuple[np.ndarray, slice, slice]:
+            # delete temporary reference file
+            os.remove(dolphin_ref_tif)
 
-            # Only use the cor_reader if it's the same shape as the unw_reader
-            if len(readers) == 2:
-                unw_reader, cor_reader = readers
-                unw_stack = unw_reader[:, rows, cols]
-                weights = cor_reader[:, rows, cols]
-                cor_threshold = 0.4
-                weights[weights < cor_threshold] = 0
-            else:
-                unw_stack = readers[0][:, rows, cols]
-                weights = None
-
-            # Fit a line to each pixel with weighted least squares
-            return (
-                estimate_velocity(
-                    x_arr=x_arr,
-                    unw_stack=unw_stack,
-                    weight_stack=weights
-                ),
-                rows,
-                cols,
-            )
-
-        readers = [ts_data]
-        process_blocks(
-            readers=readers,
-            writer=writer,
-            func=read_and_fit,
-            block_shape=block_shape,
-            num_threads=num_threads,
-        )
-
-        writer.notify_finished()
-
-        # delete temporary reference file
-        os.remove(dolphin_ref_tif)
-
-        # update metadata field
-        start_date = date12_list[0].split('_')[0]
-        end_date = date12_list[-1].split('_')[-1]
-        meta["DATA_TYPE"] = 'float32'
-        meta["DATE12"] =  start_date + '_' + end_date
-        meta["FILE_PATH"] = ts_name
-        meta["FILE_TYPE"] = 'velocity'
-        meta["NO_DATA_VALUE"] = 'none'
-        meta["PROCESSOR"] = 'dolphin'
-        meta["REF_DATE"] = start_date
-        meta["START_DATE"] = start_date
-        meta["END_DATE"] = end_date
-        meta["UNIT"] = 'm/year'
-        # apply reference point to velocity file
-        if ref_meta is not None:
-            meta['REF_LAT'] = ref_meta['REF_LAT']
-            meta['REF_LON'] = ref_meta['REF_LON']
-            meta['REF_Y'] = ref_meta['REF_Y']
-            meta['REF_X'] = ref_meta['REF_X']
-
-        # initiate HDF5 file
-        row = int(meta['LENGTH'])
-        col = int(meta['WIDTH'])
-        ds_name_dict = {
-            "velocity": [np.float32, (row, col), None],
-        }
-        writefile.layout_hdf5(vel_file, ds_name_dict, metadata=meta)
-
-        # writing data to HDF5 file
-        print("writing data to HDF5 file {} with a mode ...".format(vel_file))
-        with h5py.File(vel_file, "a") as f:
-            vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
-            # Convert 0s to NaN
-            vel_arr = np.where(vel_arr == 0, np.nan, vel_arr)
-            # apply reference point
+            # update metadata field
+            start_date = date12_list[0].split('_')[0]
+            end_date = date12_list[-1].split('_')[-1]
+            meta["DATA_TYPE"] = 'float32'
+            meta["DATE12"] =  start_date + '_' + end_date
+            meta["FILE_PATH"] = ts_name
+            meta["FILE_TYPE"] = 'velocity'
+            meta["NO_DATA_VALUE"] = 'none'
+            meta["PROCESSOR"] = 'dolphin'
+            meta["REF_DATE"] = start_date
+            meta["START_DATE"] = start_date
+            meta["END_DATE"] = end_date
+            meta["UNIT"] = 'm/year'
+            # apply reference point to velocity file
             if ref_meta is not None:
-                ref_y = int(ref_meta['REF_Y'])
-                ref_x = int(ref_meta['REF_X'])
-                vel_arr -= np.nan_to_num(vel_arr[ref_y, ref_x])
-            # write to file
-            f["velocity"][:] = vel_arr
+                meta['REF_LAT'] = ref_meta['REF_LAT']
+                meta['REF_LON'] = ref_meta['REF_LON']
+                meta['REF_Y'] = ref_meta['REF_Y']
+                meta['REF_X'] = ref_meta['REF_X']
 
-        del ts_data, readers
+            # initiate HDF5 file
+            row = int(meta['LENGTH'])
+            col = int(meta['WIDTH'])
+            ds_name_dict = {
+                "velocity": [np.float32, (row, col), None],
+            }
+            writefile.layout_hdf5(vel_file, ds_name_dict, metadata=meta)
+
+            # writing data to HDF5 file
+            print("writing data to HDF5 file {} with a mode ...".format(vel_file))
+            with h5py.File(vel_file, "a") as f:
+                vel_arr = gdal.Open(dolphin_vel_file).ReadAsArray()
+                # Convert 0s to NaN
+                vel_arr = np.where(vel_arr == 0, np.nan, vel_arr)
+                # apply reference point
+                if ref_meta is not None:
+                    ref_y = int(ref_meta['REF_Y'])
+                    ref_x = int(ref_meta['REF_X'])
+                    vel_arr -= np.nan_to_num(vel_arr[ref_y, ref_x])
+                # write to file
+                f["velocity"][:] = vel_arr
+
+            del ts_data, readers
+
         print("finished writing to HDF5 file: {}".format(vel_file))
 
         # generate mask file from unw phase field
@@ -1788,4 +1863,3 @@ def main(iargs=None):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-
