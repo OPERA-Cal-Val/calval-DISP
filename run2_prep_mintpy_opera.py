@@ -1337,10 +1337,6 @@ def main(iargs=None):
                 )
                 step_dates = [i for i in step_dates if i not in bad_steps]
 
-    # set final step array
-    if inps.step_dates is not None:
-        step_dates = " ".join(map(str, step_dates))
-
     # filter out duplicate products
     str_list = [Path(f).stem for f in product_files]
     basenames_noext = [str(f).replace(full_suffix(f), "") for f in str_list]
@@ -1596,8 +1592,7 @@ def main(iargs=None):
     # apply DEM-error correction
     if inps.dem_error is True:
         # add bperp layers to geom file
-        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5') #!#
-        #!#bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline_REMOVEWHENBPERPFIXED.h5') #!#
+        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5')
         if os.path.exists(bperp_file):
             # Open bperp file in 'Read' mode and geometry file in 'Append' mode
             with (
@@ -1719,9 +1714,11 @@ def main(iargs=None):
 
         # proceed with inversion through MintPy
         if inps.mintpy_inv is True:
-            iargs = [ts_name, '-o', vel_file, '--periodic', '1.0 0.5']
+            iargs = [ts_name, '-o', vel_file, '--periodic', '1', '0.5']
             if inps.step_dates is not None:
-                iargs += ['--step', step_dates]
+                iargs += ['--step']
+                for i in step_dates:
+                    iargs += [str(i)]
             timeseries2velocity.main(iargs)
             # extract tif
             iargs = [vel_file, '-d', 'velocity', '-o',
