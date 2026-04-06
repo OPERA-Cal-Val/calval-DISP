@@ -72,6 +72,37 @@ from osgeo import gdal
 from packaging.version import Version
 from tqdm import tqdm
 
+# HOTFIX FOR NUMPY MASKEDARRAY + NAN_TO_NUM BUG ---
+# np.nan_to_num crashes on MaskedArrays with float fill_values due to a known 
+# NumPy bug when applying bitwise operators to masks inside np.isposinf/isneginf. 
+# This intercepts MaskedArrays and safely strips them to standard arrays first.
+_orig_nan_to_num = np.nan_to_num
+def _safe_nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
+    if isinstance(x, np.ma.MaskedArray):
+        x = x.filled(np.nan)
+    return _orig_nan_to_num(x, copy=copy, nan=nan, posinf=posinf, neginf=neginf)
+np.nan_to_num = _safe_nan_to_num
+
+_orig_isposinf = np.isposinf
+def _safe_isposinf(x, out=None):
+    if isinstance(x, np.ma.MaskedArray):
+        x = x.filled(np.nan)
+    return _orig_isposinf(x, out=out)
+np.isposinf = _safe_isposinf
+
+_orig_isneginf = np.isneginf
+def _safe_isneginf(x, out=None):
+    if isinstance(x, np.ma.MaskedArray):
+        x = x.filled(np.nan)
+    return _orig_isneginf(x, out=out)
+np.isneginf = _safe_isneginf
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+
+# Add the src directory to sys.path
+sys.path.append(str(Path(__file__).parent / "src"))
+
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
@@ -1592,7 +1623,8 @@ def main(iargs=None):
     # apply DEM-error correction
     if inps.dem_error is True:
         # add bperp layers to geom file
-        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5')
+        #!#bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline.h5') #!#
+        bperp_file = os.path.join(inps.out_dir, 'perpendicular_baseline_REMOVEWHENBPERPFIXED.h5') #!#
         if os.path.exists(bperp_file):
             # Open bperp file in 'Read' mode and geometry file in 'Append' mode
             with (
@@ -1671,7 +1703,7 @@ def main(iargs=None):
 
     # apply TROPO correction
     try:
-        from mintpy.cli import tropo_opera
+        from mintpy.cli import tropo_opera_MANUAL_STOP #!#
         # updated iterative name
         prev_iterative_ts = deepcopy(iterative_ts)
         iterative_ts = iterative_ts[:-3] + "_TROPO.h5"
@@ -1861,3 +1893,4 @@ def main(iargs=None):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+
