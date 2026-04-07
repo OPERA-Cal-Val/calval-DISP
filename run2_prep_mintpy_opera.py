@@ -60,6 +60,7 @@ import gc
 # Third-party imports
 import asf_search as asf
 from copy import deepcopy
+import functools
 import h5py
 import netCDF4
 import networkx as nx
@@ -77,20 +78,28 @@ from tqdm import tqdm
 # NumPy bug when applying bitwise operators to masks inside np.isposinf/isneginf. 
 # This intercepts MaskedArrays and safely strips them to standard arrays first.
 _orig_nan_to_num = np.nan_to_num
+
+@functools.wraps(_orig_nan_to_num)
 def _safe_nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None):
     if isinstance(x, np.ma.MaskedArray):
         x = x.filled(np.nan)
     return _orig_nan_to_num(x, copy=copy, nan=nan, posinf=posinf, neginf=neginf)
 np.nan_to_num = _safe_nan_to_num
 
+
 _orig_isposinf = np.isposinf
+
+@functools.wraps(_orig_isposinf)
 def _safe_isposinf(x, out=None):
     if isinstance(x, np.ma.MaskedArray):
         x = x.filled(np.nan)
     return _orig_isposinf(x, out=out)
 np.isposinf = _safe_isposinf
 
+
 _orig_isneginf = np.isneginf
+
+@functools.wraps(_orig_isneginf)
 def _safe_isneginf(x, out=None):
     if isinstance(x, np.ma.MaskedArray):
         x = x.filled(np.nan)
