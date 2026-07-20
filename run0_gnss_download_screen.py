@@ -193,7 +193,10 @@ def read_UNR_gnss_step(url):
     
     for col in df.columns:
         if col not in ['code', 'step_date']:  # Skip code and date columns
-            df[col] = pd.to_numeric(df[col], errors='ignore')
+            try:
+                df[col] = pd.to_numeric(df[col])
+            except (ValueError, TypeError):
+                pass
     
     return df
 
@@ -354,9 +357,9 @@ def createParser(iargs=None):
     )
     parser.add_argument(
         "--endDate",
-        default="20240930",
+        default=dt.now().strftime("%Y%m%d"),
         type=str,
-        help="End date of DISP-S1, YYYYMMDD (default: 20240930)",
+        help="End date of DISP-S1, YYYYMMDD (default: %(default)s)",
     )
     parser.add_argument(
         "--gnss_completeness_threshold",
