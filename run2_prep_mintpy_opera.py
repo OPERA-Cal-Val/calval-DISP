@@ -71,6 +71,9 @@ import rasterio
 import xarray as xr
 from osgeo import gdal
 from packaging.version import Version
+from rasterio.enums import Resampling
+from rasterio.transform import Affine
+from rasterio.warp import reproject
 from tqdm import tqdm
 
 # HOTFIX FOR NUMPY MASKEDARRAY + NAN_TO_NUM BUG ---
@@ -120,12 +123,13 @@ sys.path.append(str(Path(__file__).parent / "src"))
 
 # Local application/library-specific imports
 from mintpy.cli import (
-    generate_mask,
-    mask,
     dem_error,
     diff,
-    timeseries2velocity,
+    generate_mask,
+    mask,
     save_gdal,
+    timeseries2velocity,
+    tropo_opera,
 )
 from mintpy.reference_point import reference_point_attribute
 from mintpy.utils import arg_utils, ptime, readfile, writefile
@@ -1064,8 +1068,151 @@ def prepare_timeseries(
     return all_outputs, ref_meta
 
 
-def mintpy_prepare_geometry(outfile, int_file, geom_dir, metadata,
-                            water_mask_file=None):
+def _get_geometry_grid(raster_path):
+    """Return the shape, transform, and CRS for a GDAL-readable raster."""
+    cols, rows = get_raster_xysize(raster_path)
+    geotransform = get_raster_gt(raster_path)
+    return {
+        "shape": (int(rows), int(cols)),
+        "transform": Affine.from_gdal(*geotransform),
+        "crs": get_raster_crs(raster_path),
+    }
+
+
+def _geometry_grids_match(source_grid, target_grid):
+    """Return whether two raster grids have matching spatial definitions."""
+    same_crs = source_grid["crs"] == target_grid["crs"]
+    same_transform = source_grid["transform"].almost_equals(
+        target_grid["transform"]
+    )
+    return (
+        source_grid["shape"] == target_grid["shape"]
+        and same_crs
+        and same_transform
+    )
+
+
+def _align_geometry_layer(data, source_grid, target_grid, dataset_name):
+    """Place a geometry layer onto the target grid without interpolation."""
+    if _geometry_grids_match(source_grid, target_grid):
+        return data
+
+    is_mask = dataset_name in {"shadowMask", "waterMask"}
+    if is_mask:
+        source = np.asarray(data)
+        destination = np.zeros(target_grid["shape"], dtype=source.dtype)
+        source_nodata = None
+        destination_nodata = 0
+    else:
+        source = np.asarray(data, dtype=np.float32)
+        destination = np.full(
+            target_grid["shape"],
+            np.nan,
+            dtype=np.float32,
+        )
+        source_nodata = np.nan
+        destination_nodata = np.nan
+
+    source_crs = source_grid["crs"] or target_grid["crs"]
+    target_crs = target_grid["crs"] or source_grid["crs"]
+    if source_crs is None or target_crs is None:
+        raise ValueError(
+            f"Cannot align {dataset_name}: source or target CRS is missing."
+        )
+
+    reproject(
+        source=source,
+        destination=destination,
+        src_transform=source_grid["transform"],
+        src_crs=source_crs,
+        src_nodata=source_nodata,
+        dst_transform=target_grid["transform"],
+        dst_crs=target_crs,
+        dst_nodata=destination_nodata,
+        resampling=Resampling.nearest,
+        init_dest_nodata=True,
+    )
+    print(
+        f"Aligned {dataset_name} from {source_grid['shape']} to "
+        f"{target_grid['shape']}."
+    )
+    return destination
+
+
+def _get_displacement_reference_grid(int_file):
+    """Return a grid from a displacement dataset in an input product."""
+    if str(int_file).startswith("NETCDF:"):
+        return _get_geometry_grid(int_file), int_file
+
+    errors = []
+    for dataset_name in ("displacement", "unwrapped_phase"):
+        raster_path = f'NETCDF:"{int_file}":{dataset_name}'
+        try:
+            return _get_geometry_grid(raster_path), raster_path
+        except Exception as exc:
+            errors.append(f"{dataset_name}: {exc}")
+
+    details = "; ".join(errors)
+    raise ValueError(
+        "Unable to use height, waterMask, or an input displacement layer "
+        f"as the geometry reference grid. Attempts: {details}"
+    )
+
+
+def _select_geometry_reference_grid(file_to_path, int_file):
+    """Select height, waterMask, or displacement as the target grid."""
+    for dataset_name in ("height", "waterMask"):
+        raster_path = file_to_path.get(dataset_name)
+        if raster_path and Path(raster_path).is_file():
+            try:
+                grid = _get_geometry_grid(raster_path)
+            except Exception as exc:
+                print(
+                    f"Unable to use {dataset_name} as geometry guide: {exc}"
+                )
+                continue
+            print(
+                f"Using {dataset_name} as geometry guide with shape "
+                f"{grid['shape']}."
+            )
+            return grid, dataset_name
+
+    grid, raster_path = _get_displacement_reference_grid(int_file)
+    print(
+        "Using input displacement as geometry guide with shape "
+        f"{grid['shape']}: {raster_path}"
+    )
+    return grid, "displacement"
+
+
+def _update_geometry_metadata(meta, target_grid):
+    """Update MintPy metadata to describe the selected geometry grid."""
+    transform = target_grid["transform"]
+    if not np.isclose(transform.b, 0.0) or not np.isclose(transform.d, 0.0):
+        raise ValueError(
+            "Rotated geometry grids are not supported by MintPy metadata."
+        )
+
+    rows, cols = target_grid["shape"]
+    meta["LENGTH"] = rows
+    meta["WIDTH"] = cols
+    meta["X_FIRST"] = transform.c
+    meta["Y_FIRST"] = transform.f
+    meta["X_STEP"] = transform.a
+    meta["Y_STEP"] = transform.e
+    if target_grid["crs"] is not None:
+        epsg = target_grid["crs"].to_epsg()
+        if epsg is not None:
+            meta["EPSG"] = epsg
+
+
+def mintpy_prepare_geometry(
+    outfile,
+    int_file,
+    geom_dir,
+    metadata,
+    water_mask_file=None,
+):
     """Prepare the geometry file."""
     print('-' * 50)
     print(f'preparing geometry file: {outfile}')
@@ -1085,36 +1232,65 @@ def mintpy_prepare_geometry(outfile, int_file, geom_dir, metadata,
     if water_mask_file:
         file_to_path['waterMask'] = water_mask_file
 
-    dsDict = {}
-    for dsName, fname in file_to_path.items():
+    target_grid, _ = _select_geometry_reference_grid(
+        file_to_path,
+        int_file,
+    )
+    _update_geometry_metadata(meta, target_grid)
+
+    dataset_dict = {}
+    for dataset_name, fname in file_to_path.items():
         try:
-            data = readfile.read(fname, datasetName=dsName)[0]
-            if dsName not in ['shadowMask', 'waterMask']:
+            data = readfile.read(fname, datasetName=dataset_name)[0]
+            if dataset_name not in ['shadowMask', 'waterMask']:
+                if not np.issubdtype(data.dtype, np.floating):
+                    data = data.astype(np.float32)
                 data[data == 0] = np.nan
-            dsDict[dsName] = data
+            source_grid = _get_geometry_grid(fname)
+            dataset_dict[dataset_name] = _align_geometry_layer(
+                data,
+                source_grid,
+                target_grid,
+                dataset_name,
+            )
 
             # write data to HDF5 file
-        except FileNotFoundError as e:  # https://github.com/insarlab/MintPy/issues/1081
-            print(f'Skipping {fname}: {e}')
+        except FileNotFoundError as exc:
+            # See https://github.com/insarlab/MintPy/issues/1081.
+            print(f'Skipping {fname}: {exc}')
 
     # Compute the azimuth and incidence angles from east/north coefficients
-    azimuth_angle, east, north = get_azimuth_ang(dsDict)
-    dsDict['azimuthAngle'] = azimuth_angle
+    azimuth_angle, east, north = get_azimuth_ang(dataset_dict)
+    dataset_dict['azimuthAngle'] = azimuth_angle
 
     up = np.sqrt(1 - east**2 - north**2)
     incidence_angle = np.rad2deg(np.arccos(up))
-    dsDict['incidenceAngle'] = incidence_angle
+    dataset_dict['incidenceAngle'] = incidence_angle
 
     # write out slant range distance
     slant_range = netCDF4.Dataset(int_file, keepweakref=True)
     slant_range = float(
         slant_range.groups['metadata']['slant_range_mid_swath'][0]
     )
-    slant_range = np.full_like(incidence_angle,
-        fill_value=slant_range, dtype=np.float32)
-    dsDict['slantRangeDistance'] = slant_range
+    slant_range = np.full_like(
+        incidence_angle,
+        fill_value=slant_range,
+        dtype=np.float32,
+    )
+    dataset_dict['slantRangeDistance'] = slant_range
 
-    writefile.write(dsDict, outfile, metadata=meta)
+    unexpected_shapes = {
+        dataset_name: data.shape
+        for dataset_name, data in dataset_dict.items()
+        if data.shape != target_grid["shape"]
+    }
+    if unexpected_shapes:
+        raise ValueError(
+            "Geometry layers do not match the selected target grid "
+            f"{target_grid['shape']}: {unexpected_shapes}"
+        )
+
+    writefile.write(dataset_dict, outfile, metadata=meta)
     return outfile
 
 
@@ -1902,4 +2078,3 @@ def main(iargs=None):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-
