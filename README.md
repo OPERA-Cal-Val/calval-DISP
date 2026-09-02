@@ -16,7 +16,7 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
     - [Step 0: Download GNSS measurements](#step-0-download-gnss-measurements)
     - [Step 1: Download DISP-S1 products, static layers, and geometry files](#step-1-download-disp-s1-products-static-layers-and-geometry-files)
     - [Step 2: Prepare timeseries and velocity estimate](#step-2-prepare-timeseries-and-velocity-estimate)
-    - [OPTIONAL Step 2b: Stitch Continuous Track Frames] (#step-2b-continuous-track-frames)
+    - [OPTIONAL Step 2b: Stitch Continuous Track Frames](#optional-step-2b-stitch-continuous-track-frames)
     - [Step 3: Generating non-linear displacement score map](#step-3-generating-non-linear-displacement-score-map)
     - [Step 4: Perform VA1 and VA2 Cal/Val analysis](#step-4-perform-va1-and-va2-calval-analysis)
     - [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#step-5-optional-generate-comprehensive-gnss-vs-insar-comparison-plots)
@@ -191,7 +191,7 @@ Note:
 <br />
 <br />
 
-### Step 2b: [OPTIONAL] Stitch Continuous Track Frames
+### OPTIONAL Step 2b: Stitch Continuous Track Frames
 
 If your study area spans multiple frames along the same track, you can merge them using the `run2b_stitch_track_frames.py` utility. This script iteratively stitches the timeseries and velocity inputs generated in Step 2 into a single, continuous map. 
 
