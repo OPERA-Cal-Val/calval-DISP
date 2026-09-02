@@ -16,6 +16,7 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
     - [Step 0: Download GNSS measurements](#step-0-download-gnss-measurements)
     - [Step 1: Download DISP-S1 products, static layers, and geometry files](#step-1-download-disp-s1-products-static-layers-and-geometry-files)
     - [Step 2: Prepare timeseries and velocity estimate](#step-2-prepare-timeseries-and-velocity-estimate)
+    - [OPTIONAL Step 2b: Stitch Continuous Track Frames] (#step-2b-continuous-track-frames)
     - [Step 3: Generating non-linear displacement score map](#step-3-generating-non-linear-displacement-score-map)
     - [Step 4: Perform VA1 and VA2 Cal/Val analysis](#step-4-perform-va1-and-va2-calval-analysis)
     - [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#step-5-optional-generate-comprehensive-gnss-vs-insar-comparison-plots)
@@ -187,6 +188,30 @@ tsview.py /path/to/work/folder/mintpy_output/velocity.h5 \
 
 Note: 
 `recommended_mask90threshold.h5` is based on the time-series of `recommended_mask` layers (i.e. `recommended_mask.h5`). We by default (i.e. `--reliability-threshold 0.9`) pick the top 90% representing the "most reliable pixels in time" after normalizing the `recommended_mask` against the total number of epoch/dataset.
+<br />
+<br />
+
+### Step 2b: [OPTIONAL] Stitch Continuous Track Frames
+
+If your study area spans multiple frames along the same track, you can merge them using the `run2b_stitch_track_frames.py` utility. This script iteratively stitches the timeseries and velocity inputs generated in Step 2 into a single, continuous map. 
+
+**Important Constraints:**
+- All input frames **must** belong to the same track and be spatially continuous.
+- The script relies on the strict output structure from Step 2, where directories are named using the OPERA Frame ID (e.g., `F11115`, `F11116`) and consecutive IDs dictate expected spatial overlap.
+
+```bash
+# Args:
+# -i, --input-files  Input velocity.tif files (wildcards supported)
+# -o, --output-dir   Output directory for the final stitched map
+# -r, --ref-lat-lon  Final spatial reference point passed as 'lat lon'
+# --skip-mask        [Optional] Skip applying the 90% reliability threshold mask
+```
+
+run2b_stitch_track_frames.py \
+        -i "/path/to/work/folder/mintpy_output/F*/velocity.tif" \
+        -o /path/to/work/folder/stitched_output \
+        -r '36.612 -121.064'
+
 <br />
 <br />
 
