@@ -22,10 +22,11 @@ Repository of tools intended to address the Cal/Val validation plan for the Leve
     - [Step 5: OPTIONAL Generate comprehensive GNSS vs InSAR comparison plots](#step-5-optional-generate-comprehensive-gnss-vs-insar-comparison-plots)
 5. [Validation Report Tool](#validation-report-tool)
 6. [OPTIONAL Compare DISP Layers Between Processing Versions](#optional-compare-disp-layers-between-processing-versions)
-7. [OPTIONAL dolphin Software Workflow](#optional-dolphin-software-workflow)
-8. [Legacy Tools](#legacy-tools)
-9. [References](#references)
-10. [Contributors](#contributors)
+7. [OPTIONAL Compare Development SDS Products vs DAAC Archive](#optional-compare-development-sds-products-vs-daac-archive)
+8. [OPTIONAL dolphin Software Workflow](#optional-dolphin-software-workflow)
+9. [Legacy Tools](#legacy-tools)
+10. [References](#references)
+11. [Contributors](#contributors)
 
 ## Installation
 
@@ -433,6 +434,42 @@ Review the executed notebook to verify:
 This step helps you spot discrepancies between processing versions quickly and
 provides a consolidated artifact (the executed notebook + figures) to archive
 with the frame’s QA package.
+<br />
+<br />
+<br />
+<br />
+
+## [OPTIONAL] Compare Development SDS Products vs DAAC Archive
+
+### Development Tool: Minimum Spanning Network & Connectivity Check
+
+The `compare_acquisitions.py` script is a development tool intended to compare development sample products (SDS/forward processing) against existing historic products available on the DAAC archive. It is primarily used to evaluate temporal connectivity, deduplicate products, and ensure overlapping dates are properly aligned when combining sample data with historic datasets.
+
+**Key Features:**
+* **Visualizes Timelines:** Generates a 2-panel timeline plot to identify gaps in sequential short-baseline pairs and flags missing overlaps between the two datasets.
+* **Ministacking Validation:** Produces a reference vs. secondary date scatter plot to explicitly identify and label unshared dates within the overlap window.
+* **Network Generation:** Automatically builds a combined directory (a minimum spanning network) composed of symbolic links. It selects DAAC products prior to the SDS pivot date and SDS products after the pivot date to create a continuous chronological stack.
+* **Data Retrieval:** Searches for SDS sample products in a local cache first, seamlessly falling back to remote S3 bucket queries if local files are absent.
+
+### Execution
+
+To run the comparison and generate the plots and symlinks, run the script and specify your target frame:
+
+```bash
+# Args:
+# --frame           OPERA frame number (default: F11114)
+# --daac_dir        Local path to downloaded DAAC .nc files (default: DAAC_run/products)
+# --s3_path         Base S3 path to search for remote SDS products
+# --sds_local_dir   Local path to downloaded SDS .nc files
+# --sds_daac_combo  Output directory for the generated symlinks (default: forward+DAAC/products)
+
+compare_acquisitions.py \
+    --frame F11114 \
+    --daac_dir /path/to/DAAC_run/products \
+    --sds_local_dir /path/to/sds_cache \
+    --sds_daac_combo /path/to/output_network/products
+```
+
 <br />
 <br />
 <br />
