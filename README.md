@@ -443,7 +443,7 @@ with the frame’s QA package.
 
 ### Development Tool: Minimum Spanning Network & Connectivity Check
 
-The `compare_acquisitions.py` script is a development tool intended to compare development sample products (SDS/forward processing) against existing historic products available on the DAAC archive. It is primarily used to evaluate temporal connectivity, deduplicate products, and ensure overlapping dates are properly aligned when combining sample data with historic datasets.
+The `comparison_workflow/compare_acquisitions.py` script is a development tool intended to compare development sample products (SDS/forward processing) against existing historic products available on the DAAC archive. It is primarily used to evaluate temporal connectivity, deduplicate products, and ensure overlapping dates are properly aligned when combining sample data with historic datasets.
 
 **Key Features:**
 * **Visualizes Timelines:** Generates a 2-panel timeline plot to identify gaps in sequential short-baseline pairs and flags missing overlaps between the two datasets.
@@ -463,7 +463,7 @@ To run the comparison and generate the plots and symlinks, run the script and sp
 # --sds_local_dir   Local path to downloaded SDS .nc files
 # --sds_daac_combo  Output directory for the generated symlinks (default: forward+DAAC/products)
 
-compare_acquisitions.py \
+/path/to/source/repo/calval-DISP/comparison_workflow/compare_acquisitions.py \
     --frame F11114 \
     --daac_dir /path/to/DAAC_run/products \
     --sds_local_dir /path/to/sds_cache \
