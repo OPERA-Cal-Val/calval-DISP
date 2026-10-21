@@ -1888,7 +1888,7 @@ def main(iargs=None):
 
     # apply TROPO correction
     try:
-        from mintpy.cli import tropo_opera_MANUAL_STOP #!#
+        from mintpy.cli import tropo_opera
         # updated iterative name
         prev_iterative_ts = deepcopy(iterative_ts)
         iterative_ts = iterative_ts[:-3] + "_TROPO.h5"
